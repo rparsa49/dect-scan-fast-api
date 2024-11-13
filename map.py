@@ -5,7 +5,7 @@ import json
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from pydicom.pixel_data_handlers.util import apply_modality_lut
-from dect_processing import categorize_material, load_circles_data, load_dicom_image, process_and_save_circles, draw_and_calculate_circles
+from legacy.dect_processing import categorize_material, load_circles_data, load_dicom_image, process_and_save_circles, draw_and_calculate_circles
 
 # Define color mapping for each material
 material_colors = {
