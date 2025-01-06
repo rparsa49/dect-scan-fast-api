@@ -35,10 +35,12 @@ Path(IMAGES_DIR).mkdir(exist_ok=True)
 
 supported_models = {
     "Saito": {
+        "name": "Saito",
         "description": "Saito's model for calculating stopping power",
-
+        
     },
     "Hunemohr": {
+        "name": "Saito",
         "description": "Hunemohr's model for calculating stopping power",
     }
 }
