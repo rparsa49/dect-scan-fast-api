@@ -1,3 +1,4 @@
+import shutil
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
@@ -258,3 +259,13 @@ async def analyze_inserts(request: Request):
             })
 
     return JSONResponse({"results": results})
+
+# Remove processed images folder on shutdown
+@app.on_event("shutdown")
+def cleanup_processed_images():
+    try:
+        if os.path.exists(IMAGES_DIR):
+            shutil.rmtree(IMAGES_DIR)
+            logging.info(f"Deleted the '{IMAGES_DIR}' folder successfully.")
+    except Exception as e:
+        logging.error(f"Error deleting the '{IMAGES_DIR}' folder: {e}")
