@@ -32,6 +32,7 @@ def rho_e_saito(HU):
 def mew_saito(HU):
     '''
     Saito 2017
+    HU: CT number at either high or low energy
     '''
     return HU/1000 + 1
 
