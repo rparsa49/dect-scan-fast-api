@@ -15,6 +15,7 @@ from methods.saito import (
     alpha_saito, hu_saito, rho_e_saito, mew_saito, z_eff_saito
 )
 from methods.spr import sp_truth
+from methods.true_attenuation import linear_attenuation
 from methods.ln_mean_excitation_potential import ln_mean_excitation_potential
 from dect_processing.dect import (
     load_dicom_image,
@@ -52,35 +53,6 @@ HU_CATEGORIES = load_json("hu_categories.json")
 ELEMENT_PROPERTIES = load_json("element_properties.json")
 MATERIAL_PROPERTIES = load_json("material_properties.json")
 CIRCLE_DATA = load_json("circles.json")
-
-'''
-Below are functions for the various mathematical models.
-'''
-
-# Method for linear attenuation of a material
-def linear_attenuation(material_info):
-    rho = material_info["density"]
-    composition = material_info["composition"]
-    
-    mu_total = 0.0
-    for element, fraction in composition.items():
-        # get elemental properties
-        atomic_mass = ELEMENT_PROPERTIES[element]["mass"]
-        atomic_number = ELEMENT_PROPERTIES[element]["number"]
-        
-        # number density of the element in the material
-        N = (rho * fraction) / atomic_mass
-        
-        mu_a = atomic_number
-        
-        mu_total += mu_a * N
-    return mu_total
-
-
-'''
-Below are DECT Processing Functions
-'''
-
 
 '''
 API CALLS

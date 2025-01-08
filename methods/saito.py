@@ -6,6 +6,8 @@ def alpha_saito(mew_l, mew_h, mew_lw, mew_hw, rho):
     mew_lw: linear attenuation coeff. of water at low energy
     mew_hw: linear attenuation coeff. of water at high energy
     rho: electron density
+    
+    return: alpha (weighing factor)
     '''
     numerator = 1
     denominator = ((mew_l / mew_lw) - rho) / ((mew_h / mew_hw) - rho) - 1
@@ -18,6 +20,8 @@ def hu_saito(alpha, high, low):
     alpha: weighing factor
     high: CT high
     low: CT low
+    
+    return: Delta HU
     '''
     return (1+alpha)*high-(alpha*low)
 
@@ -25,6 +29,8 @@ def hu_saito(alpha, high, low):
 def rho_e_saito(HU):
     '''
     Saito 2012
+    
+    return: rho (electron density)
     '''
     return (HU/1000) + 1
 
@@ -33,6 +39,8 @@ def mew_saito(HU):
     '''
     Saito 2017
     HU: CT number at either high or low energy
+    
+    return: linear attenuation coefficient
     '''
     return HU/1000 + 1
 
@@ -43,5 +51,7 @@ def z_eff_saito(mew, lam, rho):
     mew: linear attenuation coefficient (high or low)
     lam: 1/Q(E) is a material independent proportionality constant
     rho: electron density
+    
+    return: zeff (effective atomic number)
     '''
     return lam*(mew/rho - 1) + 1
