@@ -33,207 +33,17 @@ DICOM_DIR = "uploaded_dicoms"
 
 Path(IMAGES_DIR).mkdir(exist_ok=True)
 
-supported_models = {
-    "Saito": {
-        "name": "Saito",
-        "description": "Saito's model for calculating stopping power",
-        
-    },
-    "Hunemohr": {
-        "name": "Saito",
-        "description": "Hunemohr's model for calculating stopping power",
-    }
-}
+# Load JSON data files
+DATA_DIR = Path("data")
 
-# Define HU material categories (Greenway K, Campos A, Knipe H, et al. Hounsfield unit. Reference article, Radiopaedia.org (Accessed on 12 Nov 2024) https://doi.org/10.53347/rID-38181)
-HU_CATEGORIES = {
-    "Cortical Bone": (1000, float("inf")),
-    "Brain": (30, 40),
-    "Liver": (45, 50),
-    "Lung": (-950, -650),
-    "Muscle": (45, 50),
-    "Adipose": (-150, -50),
-    "True Water": (0, 0),
-    "Solid Water": (0, 0),
-    "Breast": (41, 134),
-    "Air": (-1000, -1)
-}
+def load_json(file_name):
+    with open(DATA_DIR / file_name, "r") as file:
+        return json.load(file)
 
-# Elemental Properties
-ELEMENT_PROPERTIES = {
-    'H': {
-        "number": 1,
-        "mass": 1.00794,
-        "ionization": 19.2
-    },
-    'B': {
-        "number": 5,
-        "mass": 10.811,
-        "ionization": 76.
-    },
-    'C': {
-        "number": 6,
-        "mass": 12.0107,
-        "ionization": 78.
-    },
-    'N': {
-        "number": 7,
-        "mass": 14.0067,
-        "ionization": 82.
-    },
-    'O': {
-        "number": 8,
-        "mass": 15.9994,
-        "ionization": 95.
-    },
-    'F': {
-        "number": 9,
-        "mass": 18.998,
-        "ionization": 115.
-    },
-    'Na': {
-        "number": 11,
-        "mass": 22.98977,
-        "ionization": 149.
-    },
-    'Mg': {
-        "number": 12,
-        "mass": 24.305,
-        "ionization": 156.
-    },
-    'Al': {
-        "number": 13,
-        "mass": 26.9815,
-        "ionization": 166.
-    },
-    'Si': {
-        "number": 14,
-        "mass": 28.0855,
-        "ionization": 173.
-    },
-    'P': {
-        "number": 15,
-        "mass": 30.9738,
-        "ionization": 173.
-    },
-    'Cl': {
-        "number": 17,
-        "mass": 35.453,
-        "ionization": 174.
-    },
-    'Ca': {
-        "number": 20,
-        "mass": 40.078,
-        "ionization": 191.
-    },
-    'Ti': {
-        "number": 22,
-        "mass": 47.867,
-        "ionization": 233.
-    },
-}
-
-# Material Properties Truth
-MATERIAL_PROPERTIES = {
-    "Lung": {
-        "rho": 0.46,
-        "rho_e_w": 0.44,
-        "Z_eff": 7.46,
-        "composition": {'H': 0.0743, 'O': 0.2071, 'C': 0.5786, 'N': 0.0196, 'Cl': 0.0008, 'Si': 0.0077, 'Mg': 0.1119},
-        "density": 0.29
-    },
-    "Adipose": {
-        "rho": 0.94,
-        "rho_e_w": 0.93,
-        "Z_eff": 6.17,
-        "composition": {'H': 0.0973, 'O': 0.1435, 'C': 0.7141, 'N': 0.0271, 'Cl': 0.0012, 'Ca': 0.0034, 'Si': 0.0111, 'B': 0.0005, 'Na': 0.0018},
-        "density": 0.96
-    },
-    "Breast": {
-        "rho": 0.99,
-        "rho_e_w": 0.97,
-        "Z_eff": 6.81,
-        "composition": {'H': 0.0948, 'O': 0.1513, 'C': 0.7023, 'N': 0.0247, 'Cl': 0.0012, 'Ca': 0.0074, 'Si': 0.0101, 'B': 0.0004, 'Na': 0.0016, 'Mg': 0.0061},
-        "density": 0.98
-    },
-    "True Water": {
-        "rho": 1,
-        "rho_e_w": 1,
-        "Z_eff": 7.45,
-        "composition": {'H': 0.1119, 'O': 0.8881},
-        "density": 1.00
-    },
-    "Solid Water": {
-        "rho": 1.02,
-        "rho_e_w": 0.99,
-        "Z_eff": 7.5,
-        "composition": {'H': 0.800, 'C': 0.6730, 'N': 0.0239, 'O': 0.1987, 'Cl': 0.0014, 'Ti': 0.0231},
-        "density": 1.018
-    },
-    "Muscle": {
-        "rho": 1.05,
-        "rho_e_w": 1.02,
-        "Z_eff": 7.55,
-        "composition": {'H': 0.0810, 'C': 0.6717, 'N': 0.0242, 'O': 0.1985, 'Cl': 0.0014, 'Ti': 0.0232},
-        "density": 1.049
-    },
-    "Brain": {
-        "rho": 1.05,
-        "rho_e_w": 1.05,
-        "Z_eff": 6.05,
-        "composition": {'H': 0.0823, 'O': 0.1970, 'C': 0.6575, 'N': 0.0205, 'Cl': 0.0013, 'Ca': 0.0179, 'Si': 0.0094, 'B': 0.0004, 'Na': 0.0015, 'Mg': 0.0123},
-        "density": 1.05 
-    },
-    "Liver": {
-        "rho": 1.09,
-        "rho_e_w": 1.06,
-        "Z_eff": 7.55,
-        "composition": {'H': 0.0825, 'O': 0.1902, 'C': 0.6687, 'N': 0.0225, 'Cl': 0.0014, 'Ca': 0.0194, 'Si': 0.0065, 'B': 0.0003, 'Na': 0.0010, 'Mg': 0.0075},
-        "density": 1.08
-    },
-    "Inner Bone": {
-        "rho": 1.15,
-        "rho_e_w": 1.10,
-        "Z_eff": 10.14,
-        "composition": {'H': 0.0638, 'O': 0.2564, 'C': 0.5379, 'N': 0.0173, 'Cl': 0.0010, 'Ca': 0.0982, 'Si': 0.0072, 'B': 0.0003, 'Na': 0.0011, 'Mg': 0.0168},
-        "density": 1.21
-    },
-    "B200": {
-        "rho": 1.15,
-        "rho_e_w": 1.11,
-        "Z_eff": 10.15,
-        "composition": {'H': 0.0665, 'C': 0.5552, 'N': 0.0198, 'O': 0.2364, 'P': 0.0324, 'Ca': 0.0887},
-        "density": 1.153
-    },
-    "CB30": {
-        "rho": 1.33,
-        "rho_e_w": 1.28,
-        "Z_eff": 10.61,
-        "composition": {'H': 0.0668, 'C': 0.5348, 'N': 0.0212, 'O': 0.2561, 'Ca': 0.1201},
-        "density": 1.333
-    },
-    "CB50": {
-        "rho": 1.56,
-        "rho_e_w": 1.47,
-        "Z_eff": 12.26,
-        "composition": {'H': 0.0477, 'C': 0.4163, 'N': 0.0152, 'O': 0.3200, 'Ca': 0.2002},
-        "density": 1.560
-    },
-    "Cortical Bone": {
-        "rho": 1.82,
-        "rho_e_w": 1.70,
-        "Z_eff": 13.38,
-        "composition": {'H': 0.0341, 'C': 0.3141, 'N': 0.0184, 'O': 0.3650, 'Ca': 0.2681},
-        "density": 1.823
-    },
-    "Air": {
-        "rho": 0,
-        "rho_e_w": 0,
-        "Z_eff": 7.5,
-        "composition": {'N': 0.78, 'O': 0.2095},
-        "density": 0
-    }
-}
+SUPPORTED_MODELS = load_json("supported_models.json")
+HU_CATEGORIES = load_json("hu_categories.json")
+ELEMENT_PROPERTIES = load_json("element_properties.json")
+MATERIAL_PROPERTIES = load_json("material_properties.json")
 
 '''
 Below are functions for the various mathematical models.
@@ -530,7 +340,7 @@ async def update_circles(request: Request):
 # Return supported models
 @app.get("/get-supported-models")
 async def get_supported_models():
-    return JSONResponse(supported_models)
+    return JSONResponse(SUPPORTED_MODELS)
 
 @app.post("/analyze-inserts")
 async def analyze_inserts(request: Request):
