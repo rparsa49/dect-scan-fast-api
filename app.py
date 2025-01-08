@@ -11,8 +11,10 @@ import cv2
 import logging
 import pydicom
 from methods.saito import (
-    alpha_saito, hu_saito, rho_e_saito, mew_saito, z_eff_saito, sp_truth, ln_mean_excitation_potential
+    alpha_saito, hu_saito, rho_e_saito, mew_saito, z_eff_saito
 )
+from methods.spr import sp_truth
+from methods.ln_mean_excitation_potential import ln_mean_excitation_potential
 from dect_processing.dect import (
     load_dicom_image,
     categorize_hu_value, save_dicom_as_png, process_and_save_circles, find_first_dicom_file
