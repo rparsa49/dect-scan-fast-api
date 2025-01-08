@@ -18,7 +18,7 @@ def beta_proton(ke):
     gamma = ene / m0
     return 1 - (1 / (gamma * gamma))  # math.sqrt(1 - (1 / (gamma * gamma)))
 
-def rho_e_saito(hu1, hu2, alpha, a, b):
+def rho_e_saito(hu1, hu2, alpha, a):
     """
     The electron density ratio (Phys. Med. Biol. 62 (2017) 7056).
     Arguments:
@@ -26,10 +26,9 @@ def rho_e_saito(hu1, hu2, alpha, a, b):
         hu2 (float): 2nd CT-value in HU
         alpha (float): calibration constant
         a (float): calibration constant
-        b (float): calibration constant
     """
     delta_hu = (1.0 + alpha) * hu2 - alpha * hu1
-    return a * delta_hu / 1000.0 + b
+    return a * delta_hu / 1000.0 + 1
 
 def z_eff_saito(hu1, hu2, rho_e, n, beta, c, d):
     """

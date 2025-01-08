@@ -270,15 +270,48 @@ def ln_mean_excitation_potential(z_eff):
     return a * z_eff + b
 
 # Saito's methods
-def alpha_saito(mew_m, rho_e, mew_w=0.268):
-    return 1 / ((mew_m / mew_w) - rho_e * (mew_m - 1))
+def alpha_saito(mew_l, mew_h, mew_lw, mew_hw, rho):
+    '''
+    Saito 2012
+    mew_l: linear attenuation coeff. at low energy
+    mew_h: linear attenuation coeff. at high energy
+    mew_lw: linear attenuation coeff. of water at low energy
+    mew_hw: linear attenuation coeff. of water at high energy
+    rho: electron density
+    '''
+    numerator = 1
+    denominator = ((mew_l / mew_lw) - rho) / ((mew_h / mew_hw) - rho) - 1
+    return numerator/denominator
+
+def hu_saito(alpha, high, low):
+    '''
+    Saito 2012
+    alpha: weighing factor
+    high: CT high
+    low: CT low
+    '''
+    return (1+alpha)*high-(alpha*low)
 
 def rho_e_saito(HU):
+    '''
+    Saito 2012
+    '''
     return (HU/1000) + 1
 
-def z_eff_saito(alpha, Z):
-    sum_term = sum(alpha * (Z_i ** 3.5) for Z_i in Z)
-    return sum_term ** (1/3.5)
+def mew_saito(HU):
+    '''
+    Saito 2017
+    '''
+    return HU/1000 + 1
+
+def z_eff_saito(mew, lam, rho):
+    '''
+    Saito 2017 
+    mew: linear attenuation coefficient (high or low)
+    lam: 1/Q(E) is a material independent proportionality constant
+    rho: electron density
+    '''
+    return lam*(mew/rho - 1) + 1
 
 # Stopping power
 def sp_truth(z, a, ln_i_m, beta2):
