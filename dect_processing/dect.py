@@ -18,7 +18,7 @@ MATERIAL_PROPERTIES = load_json("material_properties.json")
 IMAGES_DIR = "processed_images"
 
 # Load circle locations from circle.json
-with open("circles.json") as f:
+with open("data/circles.json") as f:
     circle_data = json.load(f)
 
 # Load DICOM image

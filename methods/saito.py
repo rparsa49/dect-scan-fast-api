@@ -5,7 +5,7 @@ def alpha_saito(mew_l, mew_h, mew_lw, mew_hw, rho):
     mew_h: linear attenuation coeff. at high energy
     mew_lw: linear attenuation coeff. of water at low energy
     mew_hw: linear attenuation coeff. of water at high energy
-    rho: electron density
+    rho: uncalibrated electron density
     
     return: alpha (weighing factor)
     '''
@@ -25,14 +25,25 @@ def hu_saito(alpha, high, low):
     '''
     return (1+alpha)*high-(alpha*low)
 
-
 def rho_e_saito(HU):
     '''
     Saito 2012
+    HU: Delata HU
     
-    return: rho (electron density)
+    return: uncalibrated rho (electron density)
     '''
-    return (HU/1000) + 1
+    return (HU/1000)+1
+
+def rho_e_calibrated_saito(HU, alpha, b):
+    '''
+    Saito 2012
+    HU: Delta HU
+    alpha: weighing factor
+    b: line intercept
+    
+    return: calibrated rho (electron density)
+    '''
+    return alpha*(HU/1000)+b
 
 
 def mew_saito(HU):

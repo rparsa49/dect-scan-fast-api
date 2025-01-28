@@ -49,6 +49,7 @@ def load_json(file_name):
         return json.load(file)
 
 SUPPORTED_MODELS = load_json("supported_models.json")
+logging.info(SUPPORTED_MODELS)
 HU_CATEGORIES = load_json("hu_categories.json")
 ELEMENT_PROPERTIES = load_json("element_properties.json")
 MATERIAL_PROPERTIES = load_json("material_properties.json")
@@ -168,6 +169,8 @@ async def analyze_inserts(request: Request):
     radii_ratios = int(radii_ratios) / 100
     phantom_type = data.get("phantom")
     saved_circles = CIRCLE_DATA[phantom_type]
+    # Assume that we pass in the method type
+    method_type = data.get("method")
 
     dicom_file_path = find_first_dicom_file()
     if not dicom_file_path:
@@ -177,7 +180,6 @@ async def analyze_inserts(request: Request):
     # Load the DICOM image and convert pixel values to HU values
     image, dicom_data = load_dicom_image(dicom_file_path)
     mean_hu_values = []
-    materials = []
     for circle in saved_circles:
         x, y, radius = circle["x"], circle["y"], circle["radius"]
         mask = np.zeros(image.shape, dtype=np.uint8)
@@ -186,58 +188,67 @@ async def analyze_inserts(request: Request):
         mean_hu = np.mean(pixel_values)
         mean_hu_values.append(mean_hu)
     
+    logging.info(f"Mean HU values: {mean_hu_values}")
 
     results = []
-    for hu in mean_hu_values:
-        rho_e = rho_e_saito(hu)
-        materials.append(categorize_hu_value(hu))
+    # From here, everything should be done in a switch-case
+    if method_type == 'Saito':
+        for i, hu in enumerate(mean_hu_values):
+            # Calculate uncalibrated electron density
+            rho_e = rho_e_saito(hu)
+            logging.info(f"Uncalibrated rho: {rho_e}")
         
-    for material in materials:
-        # Estimate effective atomic number (Z_eff) and stopping power for each material
-        material_results = []
-        logging.info(material)
+            # Use Saito's methods to compute linear attenuation coefficients
+            mu_l = mew_saito(hu)
+            mu_h = mew_saito(hu) + 1
+            logging.info(f"Low mew: {mu_l}")
+            logging.info(f"High mew : {mu_l}")
 
-        if material in MATERIAL_PROPERTIES:
-            material_info = MATERIAL_PROPERTIES[material]
+            # Calculate alpha
+            alpha = alpha_saito(mu_l, mu_h, 1.0, 1.0, rho_e)
+            logging.info(f"Alpha: {alpha}")
+        
+            # Effective atomic number calculation
+            lam = data.get('lambda') # WE SHOULD PASS THIS IN AS A CALIBRATION PARAMETER FROM FRONTEND
+            z_eff = z_eff_saito(mu_h, lam, rho_e)
+        
+            # Categorize materials based on HU
+            material = categorize_hu_value(hu)
+            logging.info(f"Materials {material}")
+        
+            # Calculate stopping power
+            spr = None
+            if material in MATERIAL_PROPERTIES:
+                material_info = MATERIAL_PROPERTIES[material]
+                a = sum(
+                    fraction * ELEMENT_PROPERTIES[element]["mass"]
+                    for element, fraction in material_info["composition"].items()
+                )
+                ln_i_m = ln_mean_excitation_potential(z_eff)
+                beta2 = data.get('beta') # WE SHOULD PASS THIS IN AS A CALIBRATION PARAMETER FROM FRONTEND 
+                spr = sp_truth(z_eff, a, ln_i_m, beta2)
             
-            # linear attenuation of the material
-            mu_m = linear_attenuation(material_info)
-            # alpha and z_eff for the material
-            alpha = alpha_saito(mu_m, rho_e)
-            z_eff = z_eff_saito(alpha, [ELEMENT_PROPERTIES[element]["number"] for element in material_info["composition"]])
-            
-            # calculate stopping power
-            a = sum(fraction * ELEMENT_PROPERTIES[element]["mass"] for element, fraction in material_info["composition"].items())
-            ln_i_m = ln_mean_excitation_potential(z_eff)
-            beta2 = 0.01 # modify if known
-            sp_ratio = sp_truth(z_eff, a, ln_i_m, beta2)
-            
-            # Append the calculated data for this material insert
+            # Append results
             results.append({
-                "mean_hu_value": hu,
-                "material": material,
-                "rho_e": rho_e,
-                "z_eff": z_eff,
-                "stopping_power": sp_ratio
-            })
-        else:
-            # If material is unknown, append the HU and indicate that details are unknown
-            results.append({
-                "mean_hu_value": hu,
-                "material": "unknown",
-                "rho_e": None,
-                "z_eff": None,
-                "stopping_power": None
-            })
+            "mean_hu_value": hu,
+            "material": material,
+            "rho_e": rho_e,
+            "alpha": alpha,
+            "z_eff": z_eff,
+            "stopping_power": spr,
+        })
+    elif method_type == 'BVM':
+        print("BVM")
 
-    return JSONResponse({"results": results})
+    return JSONResponse({"results": results})      
+    
 
 # Remove processed images folder on shutdown
-@app.on_event("shutdown")
-def cleanup_processed_images():
-    try:
-        if os.path.exists(IMAGES_DIR):
-            shutil.rmtree(IMAGES_DIR)
-            logging.info(f"Deleted the '{IMAGES_DIR}' folder successfully.")
-    except Exception as e:
-        logging.error(f"Error deleting the '{IMAGES_DIR}' folder: {e}")
+# @app.on_event("shutdown")
+# def cleanup_processed_images():
+#     try:
+#         if os.path.exists(IMAGES_DIR):
+#             shutil.rmtree(IMAGES_DIR)
+#             logging.info(f"Deleted the '{IMAGES_DIR}' folder successfully.")
+#     except Exception as e:
+#         logging.error(f"Error deleting the '{IMAGES_DIR}' folder: {e}")
