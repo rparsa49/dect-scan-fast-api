@@ -19,7 +19,7 @@ from methods.true_attenuation import linear_attenuation
 from methods.ln_mean_excitation_potential import ln_mean_excitation_potential
 from dect_processing.dect import (
     load_dicom_image,
-    categorize_hu_value, save_dicom_as_png, process_and_save_circles, find_first_dicom_file
+    categorize_hu_value, save_dicom_as_png, process_and_save_circles, find_dicom_files
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -74,11 +74,11 @@ async def upload_scan(files: List[UploadFile] = File(...)):
     slice_thickness = None
     ref_dcm = pydicom.dcmread(dicom_files[0])
     ref_kvp = ref_dcm.get("KVP")
-    logging.info(f"Reference KVP: {ref_kvp}")
+
     for dicom_file in dicom_files:
         dicom_data = pydicom.dcmread(dicom_file)
         kvp = dicom_data.get("KVP")
-        logging.info(f"Testing KVP: {kvp}")
+
         if slice_thickness is None:
             slice_thickness = dicom_data.get("SliceThickness")
         
@@ -175,23 +175,33 @@ async def analyze_inserts(request: Request):
     # Assume that we pass in the method type
     method_type = data.get("method")
 
-    dicom_file_path = find_first_dicom_file()
-    if not dicom_file_path:
+    # dicom_file_path = find_first_dicom_file()
+    high_path, low_path = find_dicom_files()
+    
+    if not high_path or not low_path:
         raise HTTPException(
             status_code=404, detail="No DICOM files found in the directory structure")
-
+    
     # Load the DICOM image and convert pixel values to HU values
-    image, dicom_data = load_dicom_image(dicom_file_path)
-    mean_hu_values = []
+    high_image, dicom_data = load_dicom_image(high_path)
+    low_image, dicom_data = load_dicom_image(low_path)
+
+    high_hu = []
+    low_hu = []
     for circle in saved_circles:
         x, y, radius = circle["x"], circle["y"], circle["radius"]
-        mask = np.zeros(image.shape, dtype=np.uint8)
+        mask = np.zeros(high_image.shape, dtype=np.uint8)
         cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
-        pixel_values = image[mask == 1]
-        mean_hu = np.mean(pixel_values)
-        mean_hu_values.append(mean_hu)
+        high_pixel_values = high_image[mask == 1]
+        low_pixel_values = low_image[mask == 1]
+
+        high_hu.append(np.mean(high_pixel_values))
+        low_hu.append(np.mean(low_pixel_values))
     
-    logging.info(f"Mean HU values: {mean_hu_values}")
+    mean_hu_values = high_hu + low_hu
+    
+    logging.info(f"High HU values: {high_hu}")
+    logging.info(f"Low HU values: {low_hu}")
 
     results = []
     # From here, everything should be done in a switch-case
@@ -202,8 +212,8 @@ async def analyze_inserts(request: Request):
             logging.info(f"Uncalibrated rho: {rho_e}")
         
             # Use Saito's methods to compute linear attenuation coefficients
-            mu_l = mew_saito(hu)
-            mu_h = mew_saito(hu) + 1
+            mu_l = mew_saito(high_hu)
+            mu_h = mew_saito(low_hu) + 1
             logging.info(f"Low mew: {mu_l}")
             logging.info(f"High mew : {mu_l}")
 

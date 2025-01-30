@@ -96,17 +96,50 @@ def draw_and_calculate_circles(image, saved_circles, radii_ratios, dicom_data):
     return mean_hu_values
 
 # Find DICOM files from uploaded directry
-def find_first_dicom_file():
+# def find_first_dicom_file():
+#     processed_images_dir = Path(IMAGES_DIR)
+#     for user_folder in processed_images_dir.iterdir():
+#         if user_folder.is_dir():
+#             for subfolder in user_folder.iterdir():
+#                 if subfolder.is_dir():
+#                     dicom_files = sorted(subfolder.glob("*.dcm"))
+#                     if dicom_files:
+#                         # Return the first DICOM file found
+#                         return str(dicom_files[0])
+#     return None
+
+# Find high and low DICOM files from uploaded directory
+def find_dicom_files():
     processed_images_dir = Path(IMAGES_DIR)
+    dicom_files = []
+
+    # Traverse all DICOM files
     for user_folder in processed_images_dir.iterdir():
         if user_folder.is_dir():
             for subfolder in user_folder.iterdir():
                 if subfolder.is_dir():
-                    dicom_files = sorted(subfolder.glob("*.dcm"))
-                    if dicom_files:
-                        # Return the first DICOM file found
-                        return str(dicom_files[0])
-    return None
+                    dicom_files.extend(sorted(subfolder.glob("*.dcm")))
+
+    # Load first image metadata to determine two energy levels
+    first_dicom = pydicom.dcmread(str(dicom_files[0]))
+    base_kVp = first_dicom.KVP  # Reference kVp value
+
+    high_kvp_file, low_kvp_file = None, None
+
+    for dicom_path in dicom_files:
+        dicom_data = pydicom.dcmread(str(dicom_path))
+        if dicom_data.KVP > base_kVp:
+            high_kvp_file = dicom_path
+        elif dicom_data.KVP < base_kVp:
+            low_kvp_file = dicom_path
+        else:
+            # Assign first file as one of the energy levels if others are missing
+            if not high_kvp_file:
+                high_kvp_file = dicom_path
+            elif not low_kvp_file:
+                low_kvp_file = dicom_path
+
+    return str(high_kvp_file), str(low_kvp_file)
 
 # Determine material category from HU
 def determine_materials(hu_values):
