@@ -72,14 +72,17 @@ async def upload_scan(files: List[UploadFile] = File(...)):
     high_kvp_files = []
     low_kvp_files = []
     slice_thickness = None
-
+    ref_dcm = pydicom.dcmread(dicom_files[0])
+    ref_kvp = ref_dcm.get("KVP")
+    logging.info(f"Reference KVP: {ref_kvp}")
     for dicom_file in dicom_files:
         dicom_data = pydicom.dcmread(dicom_file)
         kvp = dicom_data.get("KVP")
+        logging.info(f"Testing KVP: {kvp}")
         if slice_thickness is None:
             slice_thickness = dicom_data.get("SliceThickness")
-
-        if kvp > 80:  # Assuming high kVp > 80
+        
+        if kvp >= ref_kvp:
             high_kvp_files.append(dicom_file)
         else:
             low_kvp_files.append(dicom_file)
