@@ -1,6 +1,7 @@
 import os
 import pydicom
 from collections import defaultdict
+import numpy as np
 
 def categorize_series(data_dir):
     organized_series = defaultdict(
@@ -41,4 +42,11 @@ def categorize_series(data_dir):
 
 
 organized = categorize_series('/Users/royaparsa/Downloads/Data/20240513')
-print(organized)
+# print(organized)
+
+def convert_numpy(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()  # Convert NumPy array to Python list
+    elif isinstance(obj, np.float32) or isinstance(obj, np.float64):
+        return float(obj)  # Convert NumPy float to Python float
+    return obj  # Return as is if not a NumPy type

@@ -1,18 +1,12 @@
-import shutil
+import shutil, math, os, json, cv2, logging, pydicom, numpy as np
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from pathlib import Path
-import os
 from fastapi.staticfiles import StaticFiles
-import numpy as np
 from fastapi.responses import FileResponse, JSONResponse
-import json
-import cv2
-import logging
-import pydicom
 from methods.saito import (
-    alpha_saito, hu_saito, rho_e_saito, mew_saito, z_eff_saito
+    alpha_saito, hu_saito, rho_e_calibrated_saito, rho_e_saito, mew_saito, z_eff_saito
 )
 from methods.spr import sp_truth
 from methods.true_attenuation import linear_attenuation
@@ -21,6 +15,7 @@ from dect_processing.dect import (
     load_dicom_image,
     categorize_hu_value, save_dicom_as_png, process_and_save_circles, find_dicom_files
 )
+from dect_processing.organize import convert_numpy
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
@@ -49,11 +44,11 @@ def load_json(file_name):
         return json.load(file)
 
 SUPPORTED_MODELS = load_json("supported_models.json")
-logging.info(SUPPORTED_MODELS)
 HU_CATEGORIES = load_json("hu_categories.json")
 ELEMENT_PROPERTIES = load_json("element_properties.json")
 MATERIAL_PROPERTIES = load_json("material_properties.json")
 CIRCLE_DATA = load_json("circles.json")
+WATER_ATTENUATION = load_json("water_att.json")
 
 '''
 API CALLS
@@ -173,7 +168,7 @@ async def analyze_inserts(request: Request):
     phantom_type = data.get("phantom")
     saved_circles = CIRCLE_DATA[phantom_type]
     # Assume that we pass in the method type
-    method_type = data.get("method")
+    method_type = data.get("model")
 
     # dicom_file_path = find_first_dicom_file()
     high_path, low_path = find_dicom_files()
@@ -183,8 +178,8 @@ async def analyze_inserts(request: Request):
             status_code=404, detail="No DICOM files found in the directory structure")
     
     # Load the DICOM image and convert pixel values to HU values
-    high_image, dicom_data = load_dicom_image(high_path)
-    low_image, dicom_data = load_dicom_image(low_path)
+    high_image, dicom_datah = load_dicom_image(high_path)
+    low_image, dicom_datal = load_dicom_image(low_path)
 
     high_hu = []
     low_hu = []
@@ -198,37 +193,44 @@ async def analyze_inserts(request: Request):
         high_hu.append(np.mean(high_pixel_values))
         low_hu.append(np.mean(low_pixel_values))
     
-    mean_hu_values = high_hu + low_hu
+    mean_hu_values = high_hu
     
-    logging.info(f"High HU values: {high_hu}")
-    logging.info(f"Low HU values: {low_hu}")
+    # mean_hu_values = []
+    # for a, b in zip(high_hu, low_hu):
+    #     mean_hu_values.append((a+b)/2)
 
     results = []
     # From here, everything should be done in a switch-case
     if method_type == 'Saito':
+        iter = 0
         for i, hu in enumerate(mean_hu_values):
             # Calculate uncalibrated electron density
             rho_e = rho_e_saito(hu)
-            logging.info(f"Uncalibrated rho: {rho_e}")
         
             # Use Saito's methods to compute linear attenuation coefficients
-            mu_l = mew_saito(high_hu)
-            mu_h = mew_saito(low_hu) + 1
-            logging.info(f"Low mew: {mu_l}")
-            logging.info(f"High mew : {mu_l}")
+            mu_l = mew_saito(low_hu)
+            mu_h = mew_saito(high_hu)
+            for i in range(len(mu_h)):
+                mu_h[i] += 1
+
+            # Get the attenuation coefficient of water at the energy spectra
+            water_mu_h = WATER_ATTENUATION.get(str(dicom_datah.KVP))
+            water_mu_l = WATER_ATTENUATION.get(str(dicom_datal.KVP))
 
             # Calculate alpha
-            alpha = alpha_saito(mu_l, mu_h, 1.0, 1.0, rho_e)
-            logging.info(f"Alpha: {alpha}")
-        
+            alpha = alpha_saito(mu_l, mu_h, water_mu_l, water_mu_h, rho_e)
+            
+            # Calibrated rho calculation
+            beta = float(data.get("beta"))
+            rho_e_cal = rho_e_calibrated_saito(hu, alpha[iter], beta)
+            
             # Effective atomic number calculation
-            lam = data.get('lambda') # WE SHOULD PASS THIS IN AS A CALIBRATION PARAMETER FROM FRONTEND
-            z_eff = z_eff_saito(mu_h, lam, rho_e)
+            lam = 10.98
+            z_eff = z_eff_saito(mu_h, lam, rho_e_cal)
         
             # Categorize materials based on HU
             material = categorize_hu_value(hu)
-            logging.info(f"Materials {material}")
-        
+            
             # Calculate stopping power
             spr = None
             if material in MATERIAL_PROPERTIES:
@@ -238,23 +240,25 @@ async def analyze_inserts(request: Request):
                     for element, fraction in material_info["composition"].items()
                 )
                 ln_i_m = ln_mean_excitation_potential(z_eff)
-                beta2 = data.get('beta') # WE SHOULD PASS THIS IN AS A CALIBRATION PARAMETER FROM FRONTEND 
-                spr = sp_truth(z_eff, a, ln_i_m, beta2)
+                
+                # Calculate beta2 (velocity / speed of sound)
+                velocity = 299792458 * math.sqrt(1 - ((0.511 / (dicom_datah.KVP + 0.511)) ** 2))
+                beta2 = velocity / 299792458
+                
+                spr = sp_truth(z_eff, a, ln_i_m, beta2, dicom_datah.KVP)
             
+            iter += 1
             # Append results
             results.append({
-            "mean_hu_value": hu,
             "material": material,
             "rho_e": rho_e,
-            "alpha": alpha,
             "z_eff": z_eff,
             "stopping_power": spr,
         })
     elif method_type == 'BVM':
         print("BVM")
-
-    return JSONResponse({"results": results})      
-    
+        
+    return JSONResponse({"results": [{k: convert_numpy(v) for k, v in res.items()} for res in results]})
 
 # Remove processed images folder on shutdown
 # @app.on_event("shutdown")

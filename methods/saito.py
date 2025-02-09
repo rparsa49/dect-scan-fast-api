@@ -9,9 +9,12 @@ def alpha_saito(mew_l, mew_h, mew_lw, mew_hw, rho):
     
     return: alpha (weighing factor)
     '''
+    fractions = []
     numerator = 1
-    denominator = ((mew_l / mew_lw) - rho) / ((mew_h / mew_hw) - rho) - 1
-    return numerator/denominator
+    for x, y in zip(mew_l, mew_h):
+        denominator = ((x / mew_lw) - rho) / ((y / mew_hw) - rho) - 1
+        fractions.append(numerator / denominator) 
+    return fractions
 
 
 def hu_saito(alpha, high, low):
@@ -53,7 +56,10 @@ def mew_saito(HU):
     
     return: linear attenuation coefficient
     '''
-    return HU/1000 + 1
+    res = []
+    for hu in HU:
+        res.append(hu/1000 + 1)
+    return res
 
 
 def z_eff_saito(mew, lam, rho):

@@ -48,7 +48,7 @@ def categorize_hu_value(hu_value):
     for material, (min_hu, max_hu) in HU_CATEGORIES.items():
         if min_hu <= hu_value <= max_hu:
             return material
-    return "unknown"
+    # return "unknown"
 
 # Saves DICOM file as png
 def save_dicom_as_png(dicom_path: str, save_path: str):
