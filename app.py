@@ -1,5 +1,5 @@
 import shutil, math, os, json, cv2, logging, pydicom, numpy as np
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from pathlib import Path
@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from methods.saito import (
     alpha_saito, hu_saito, rho_e_calibrated_saito, rho_e_saito, mew_saito, z_eff_saito
 )
+from methods.hunemohr import rho_e_hunemohr, z_eff_hunemohr, spr_hunemohr
 from methods.spr import sp_truth
 from methods.true_attenuation import linear_attenuation
 from methods.ln_mean_excitation_potential import ln_mean_excitation_potential
@@ -49,7 +50,7 @@ ELEMENT_PROPERTIES = load_json("element_properties.json")
 MATERIAL_PROPERTIES = load_json("material_properties.json")
 CIRCLE_DATA = load_json("circles.json")
 WATER_ATTENUATION = load_json("water_att.json")
-
+ELEMENT_ATOMIC_NUMBERS = load_json("atomic_numbers.json")
 '''
 API CALLS
 '''
@@ -247,25 +248,172 @@ async def analyze_inserts(request: Request):
                 
                 spr = sp_truth(z_eff, a, ln_i_m, beta2, dicom_datah.KVP)
             
-            iter += 1
             # Append results
             results.append({
             "material": material,
             "rho_e": rho_e,
             "z_eff": z_eff,
             "stopping_power": spr,
+            "alpha": alpha[iter],
+            "beta": beta,
+            "lambda": lam
         })
-    elif method_type == 'BVM':
-        print("BVM")
-        
+            iter += 1
+    elif method_type == 'Hunemohr':
+        c = float(data.get('beta'))
+        for i, (hu_h, hu_l) in enumerate(zip(high_hu, low_hu)):
+            # Ensure HU values are scalars
+            hu_h = float(hu_h)  # Convert NumPy type to Python float
+            hu_l = float(hu_l)
+
+            # Compute electron density using Hunemohr equation
+            rho_e = rho_e_hunemohr(hu_h, hu_l, c)
+            
+            # Identify material from HU
+            material = categorize_hu_value(hu_h)
+            logging.info(f"Material Identified: {material}")
+            # Compute Z_eff using Hunemohr's method
+            if material in MATERIAL_PROPERTIES:
+                material_info = MATERIAL_PROPERTIES[material]
+                n_i = np.array(list(material_info["composition"].values()))
+                Z_i = np.array([ELEMENT_ATOMIC_NUMBERS[element] for element in material_info["composition"]])
+
+                Z_eff = z_eff_hunemohr(n_i, Z_i)
+                logging.info(f"Effective atomic number for {material} is {Z_eff}")
+                # Compute stopping power ratio
+                spr = spr_hunemohr(rho_e, Z_eff, dicom_datah.KVP)
+                logging.info(f"Stopping power for {material} is {spr}")
+            else:
+                logging.info("No material found")
+                Z_eff, spr = None, None
+            
+            results.append({
+                "material": material,
+                "rho_e": rho_e,
+                "z_eff": Z_eff,
+                "stopping_power": spr
+            })
+            
     return JSONResponse({"results": [{k: convert_numpy(v) for k, v in res.items()} for res in results]})
 
-# Remove processed images folder on shutdown
-# @app.on_event("shutdown")
-# def cleanup_processed_images():
-#     try:
-#         if os.path.exists(IMAGES_DIR):
-#             shutil.rmtree(IMAGES_DIR)
-#             logging.info(f"Deleted the '{IMAGES_DIR}' folder successfully.")
-#     except Exception as e:
-#         logging.error(f"Error deleting the '{IMAGES_DIR}' folder: {e}")
+# Test calibration
+@app.post("/test-calibration")
+async def test_calibration(
+    alpha: str = Form(...),
+    beta: str = Form(...),
+    lambda_val: str = Form(...),
+    method: str = Form(...),
+    files: List[UploadFile] = File(...)
+):
+    # Create test upload directory
+    test_folder = os.path.join(IMAGES_DIR, "test_calibration")
+    os.makedirs(test_folder, exist_ok=True)
+
+    # Save uploaded files
+    for file in files:
+        file_path = os.path.join(test_folder, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+    # **Parse JSON strings into lists of floats**
+    try:
+        # Convert string to a list by splitting on commas and stripping spaces
+        alpha_list = [float(a.strip()) for a in alpha.split(",")]
+        beta_list = [float(b.strip()) for b in beta.split(",")]
+        lambda_list = [float(l.strip()) for l in lambda_val.split(",")]
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid JSON format: {str(e)}")
+
+    # Run calibration test logging using parsed parameters
+    new_results = perform_test_calibration(
+        test_folder, alpha_list, beta_list, lambda_list, method)
+
+    return {"new_table": new_results}
+
+
+def perform_test_calibration(folder_path, alpha, beta, lambda_val, method):
+    """
+    Perform test calibration using the given method, calibration parameters, and DICOM scan.
+    """
+    high_path, low_path = find_dicom_files(folder_path)
+
+    if not high_path or not low_path:
+        raise HTTPException(
+            status_code=404, detail="No DICOM files found in the directory structure.")
+
+    # Load DICOM images and convert pixel values to HU values
+    high_image, dicom_datah = load_dicom_image(high_path)
+    low_image, dicom_datal = load_dicom_image(low_path)
+
+    # Extract mean HU values from defined circular regions
+    saved_circles = CIRCLE_DATA.get("head")  # Adjust based on phantom type
+    radii_ratios = 1.0  # Assume default ratio for testing
+
+    high_hu, low_hu = [], []
+    for circle in saved_circles:
+        x, y, radius = circle["x"], circle["y"], circle["radius"]
+        mask = np.zeros(high_image.shape, dtype=np.uint8)
+        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        high_pixel_values = high_image[mask == 1]
+        low_pixel_values = low_image[mask == 1]
+
+        high_hu.append(np.mean(high_pixel_values))
+        low_hu.append(np.mean(low_pixel_values))
+
+    mean_hu_values = high_hu  # Assuming using high kVp HU for material classification
+
+    results = []
+
+    # Determine calculation method
+    if method == "Saito":
+        iter = 0
+        for i, hu in enumerate(mean_hu_values):
+            rho_e = rho_e_saito(hu)
+            mu_h = mew_saito(high_hu[i]) + 1  # Offset by 1 for correction
+
+            # Calculate calibrated rho_e
+            rho_e_cal = rho_e_calibrated_saito(hu, alpha[iter], beta[iter])
+
+            # Calculate z_eff
+            z_eff = z_eff_saito(mu_h, lambda_val[iter], rho_e_cal)
+
+            # Identify material
+            material = categorize_hu_value(hu)
+
+            # Calculate stopping power ratio
+            spr = None
+            if material in MATERIAL_PROPERTIES:
+                material_info = MATERIAL_PROPERTIES[material]
+                a = sum(
+                    fraction * ELEMENT_PROPERTIES[element]["mass"]
+                    for element, fraction in material_info["composition"].items()
+                )
+                ln_i_m = ln_mean_excitation_potential(z_eff)
+
+                velocity = 299792458 * \
+                    math.sqrt(1 - ((0.511 / (dicom_datah.KVP + 0.511)) ** 2))
+                beta2 = velocity / 299792458
+
+                spr = sp_truth(z_eff, a, ln_i_m, beta2, dicom_datah.KVP)
+
+            # Store results
+            results.append({
+                "material": material,
+                "rho_e": rho_e,
+                "z_eff": z_eff,
+                "stopping_power": spr,
+                "alpha": alpha[iter],
+                "beta": beta[iter],
+                "lambda": lambda_val[iter]
+            })
+            iter += 1
+    elif method == "BVM":
+        # Placeholder for BVM calculations
+        logging.info("BVM method selected but not implemented.")
+
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"Method {method} not supported.")
+
+    return [{"material": res["material"], "rho_e": res["rho_e"], "z_eff": res["z_eff"], "stopping_power": res["stopping_power"]} for res in results]

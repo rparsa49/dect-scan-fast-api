@@ -46,7 +46,7 @@ def calculate_mean_pixel_value(image, circle):
 # Categorize HU value
 def categorize_hu_value(hu_value):
     for material, (min_hu, max_hu) in HU_CATEGORIES.items():
-        if min_hu <= hu_value <= max_hu:
+        if float(min_hu) <= float(hu_value) <= float(max_hu):
             return material
     # return "unknown"
 
