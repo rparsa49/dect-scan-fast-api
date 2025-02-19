@@ -1,18 +1,22 @@
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File
+import shutil, math, os, json, cv2, logging, pydicom, numpy as np
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from pathlib import Path
-import os
-from PIL import Image
 from fastapi.staticfiles import StaticFiles
-import pydicom
-import numpy as np
 from fastapi.responses import FileResponse, JSONResponse
-import json
-import cv2
-import logging
-import scipy.constants as const
-import math 
+from methods.saito import (
+    alpha_saito, hu_saito, rho_e_calibrated_saito, rho_e_saito, mew_saito, z_eff_saito
+)
+from methods.hunemohr import rho_e_hunemohr, z_eff_hunemohr, spr_hunemohr
+from methods.spr import sp_truth
+from methods.true_attenuation import linear_attenuation
+from methods.ln_mean_excitation_potential import ln_mean_excitation_potential
+from dect_processing.dect import (
+    load_dicom_image,
+    categorize_hu_value, save_dicom_as_png, process_and_save_circles, find_dicom_files
+)
+from dect_processing.organize import convert_numpy
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
@@ -33,365 +37,20 @@ DICOM_DIR = "uploaded_dicoms"
 
 Path(IMAGES_DIR).mkdir(exist_ok=True)
 
-supported_models = {
-    "Saito": {
-        "name": "Saito",
-        "description": "Saito's model for calculating stopping power",
-        
-    },
-    "Hunemohr": {
-        "name": "Saito",
-        "description": "Hunemohr's model for calculating stopping power",
-    }
-}
+# Load JSON data files
+DATA_DIR = Path("data")
 
-# Define HU material categories (Greenway K, Campos A, Knipe H, et al. Hounsfield unit. Reference article, Radiopaedia.org (Accessed on 12 Nov 2024) https://doi.org/10.53347/rID-38181)
-HU_CATEGORIES = {
-    "Cortical Bone": (1000, float("inf")),
-    "Brain": (30, 40),
-    "Liver": (45, 50),
-    "Lung": (-950, -650),
-    "Muscle": (45, 50),
-    "Adipose": (-150, -50),
-    "True Water": (0, 0),
-    "Solid Water": (0, 0),
-    "Breast": (41, 134),
-    "Air": (-1000, -1)
-}
+def load_json(file_name):
+    with open(DATA_DIR / file_name, "r") as file:
+        return json.load(file)
 
-# Elemental Properties
-ELEMENT_PROPERTIES = {
-    'H': {
-        "number": 1,
-        "mass": 1.00794,
-        "ionization": 19.2
-    },
-    'B': {
-        "number": 5,
-        "mass": 10.811,
-        "ionization": 76.
-    },
-    'C': {
-        "number": 6,
-        "mass": 12.0107,
-        "ionization": 78.
-    },
-    'N': {
-        "number": 7,
-        "mass": 14.0067,
-        "ionization": 82.
-    },
-    'O': {
-        "number": 8,
-        "mass": 15.9994,
-        "ionization": 95.
-    },
-    'F': {
-        "number": 9,
-        "mass": 18.998,
-        "ionization": 115.
-    },
-    'Na': {
-        "number": 11,
-        "mass": 22.98977,
-        "ionization": 149.
-    },
-    'Mg': {
-        "number": 12,
-        "mass": 24.305,
-        "ionization": 156.
-    },
-    'Al': {
-        "number": 13,
-        "mass": 26.9815,
-        "ionization": 166.
-    },
-    'Si': {
-        "number": 14,
-        "mass": 28.0855,
-        "ionization": 173.
-    },
-    'P': {
-        "number": 15,
-        "mass": 30.9738,
-        "ionization": 173.
-    },
-    'Cl': {
-        "number": 17,
-        "mass": 35.453,
-        "ionization": 174.
-    },
-    'Ca': {
-        "number": 20,
-        "mass": 40.078,
-        "ionization": 191.
-    },
-    'Ti': {
-        "number": 22,
-        "mass": 47.867,
-        "ionization": 233.
-    },
-}
-
-# Material Properties Truth
-MATERIAL_PROPERTIES = {
-    "Lung": {
-        "rho": 0.46,
-        "rho_e_w": 0.44,
-        "Z_eff": 7.46,
-        "composition": {'H': 0.0743, 'O': 0.2071, 'C': 0.5786, 'N': 0.0196, 'Cl': 0.0008, 'Si': 0.0077, 'Mg': 0.1119},
-        "density": 0.29
-    },
-    "Adipose": {
-        "rho": 0.94,
-        "rho_e_w": 0.93,
-        "Z_eff": 6.17,
-        "composition": {'H': 0.0973, 'O': 0.1435, 'C': 0.7141, 'N': 0.0271, 'Cl': 0.0012, 'Ca': 0.0034, 'Si': 0.0111, 'B': 0.0005, 'Na': 0.0018},
-        "density": 0.96
-    },
-    "Breast": {
-        "rho": 0.99,
-        "rho_e_w": 0.97,
-        "Z_eff": 6.81,
-        "composition": {'H': 0.0948, 'O': 0.1513, 'C': 0.7023, 'N': 0.0247, 'Cl': 0.0012, 'Ca': 0.0074, 'Si': 0.0101, 'B': 0.0004, 'Na': 0.0016, 'Mg': 0.0061},
-        "density": 0.98
-    },
-    "True Water": {
-        "rho": 1,
-        "rho_e_w": 1,
-        "Z_eff": 7.45,
-        "composition": {'H': 0.1119, 'O': 0.8881},
-        "density": 1.00
-    },
-    "Solid Water": {
-        "rho": 1.02,
-        "rho_e_w": 0.99,
-        "Z_eff": 7.5,
-        "composition": {'H': 0.800, 'C': 0.6730, 'N': 0.0239, 'O': 0.1987, 'Cl': 0.0014, 'Ti': 0.0231},
-        "density": 1.018
-    },
-    "Muscle": {
-        "rho": 1.05,
-        "rho_e_w": 1.02,
-        "Z_eff": 7.55,
-        "composition": {'H': 0.0810, 'C': 0.6717, 'N': 0.0242, 'O': 0.1985, 'Cl': 0.0014, 'Ti': 0.0232},
-        "density": 1.049
-    },
-    "Brain": {
-        "rho": 1.05,
-        "rho_e_w": 1.05,
-        "Z_eff": 6.05,
-        "composition": {'H': 0.0823, 'O': 0.1970, 'C': 0.6575, 'N': 0.0205, 'Cl': 0.0013, 'Ca': 0.0179, 'Si': 0.0094, 'B': 0.0004, 'Na': 0.0015, 'Mg': 0.0123},
-        "density": 1.05 
-    },
-    "Liver": {
-        "rho": 1.09,
-        "rho_e_w": 1.06,
-        "Z_eff": 7.55,
-        "composition": {'H': 0.0825, 'O': 0.1902, 'C': 0.6687, 'N': 0.0225, 'Cl': 0.0014, 'Ca': 0.0194, 'Si': 0.0065, 'B': 0.0003, 'Na': 0.0010, 'Mg': 0.0075},
-        "density": 1.08
-    },
-    "Inner Bone": {
-        "rho": 1.15,
-        "rho_e_w": 1.10,
-        "Z_eff": 10.14,
-        "composition": {'H': 0.0638, 'O': 0.2564, 'C': 0.5379, 'N': 0.0173, 'Cl': 0.0010, 'Ca': 0.0982, 'Si': 0.0072, 'B': 0.0003, 'Na': 0.0011, 'Mg': 0.0168},
-        "density": 1.21
-    },
-    "B200": {
-        "rho": 1.15,
-        "rho_e_w": 1.11,
-        "Z_eff": 10.15,
-        "composition": {'H': 0.0665, 'C': 0.5552, 'N': 0.0198, 'O': 0.2364, 'P': 0.0324, 'Ca': 0.0887},
-        "density": 1.153
-    },
-    "CB30": {
-        "rho": 1.33,
-        "rho_e_w": 1.28,
-        "Z_eff": 10.61,
-        "composition": {'H': 0.0668, 'C': 0.5348, 'N': 0.0212, 'O': 0.2561, 'Ca': 0.1201},
-        "density": 1.333
-    },
-    "CB50": {
-        "rho": 1.56,
-        "rho_e_w": 1.47,
-        "Z_eff": 12.26,
-        "composition": {'H': 0.0477, 'C': 0.4163, 'N': 0.0152, 'O': 0.3200, 'Ca': 0.2002},
-        "density": 1.560
-    },
-    "Cortical Bone": {
-        "rho": 1.82,
-        "rho_e_w": 1.70,
-        "Z_eff": 13.38,
-        "composition": {'H': 0.0341, 'C': 0.3141, 'N': 0.0184, 'O': 0.3650, 'Ca': 0.2681},
-        "density": 1.823
-    },
-    "Air": {
-        "rho": 0,
-        "rho_e_w": 0,
-        "Z_eff": 7.5,
-        "composition": {'N': 0.78, 'O': 0.2095},
-        "density": 0
-    }
-}
-
-'''
-Below are functions for the various mathematical models.
-'''
-
-# Method for linear attenuation of a material
-def linear_attenuation(material_info):
-    rho = material_info["density"]
-    composition = material_info["composition"]
-    
-    mu_total = 0.0
-    for element, fraction in composition.items():
-        # get elemental properties
-        atomic_mass = ELEMENT_PROPERTIES[element]["mass"]
-        atomic_number = ELEMENT_PROPERTIES[element]["number"]
-        
-        # number density of the element in the material
-        N = (rho * fraction) / atomic_mass
-        
-        mu_a = atomic_number
-        
-        mu_total += mu_a * N
-    return mu_total
-
-# ln of mean excitation potential
-def ln_mean_excitation_potential(z_eff):
-    if z_eff > 8.5:
-        a = 0.098
-        b = 3.376
-    else:
-        a = 0.125
-        b = 3.378
-    
-    return a * z_eff + b
-
-# Saito's methods
-def alpha_saito(mew_m, rho_e, mew_w=0.268):
-    return 1 / ((mew_m / mew_w) - rho_e * (mew_m - 1))
-
-def rho_e_saito(HU):
-    return (HU/1000) + 1
-
-def z_eff_saito(alpha, Z):
-    sum_term = sum(alpha * (Z_i ** 3.5) for Z_i in Z)
-    return sum_term ** (1/3.5)
-
-# Stopping power
-def sp_truth(z, a, ln_i_m, beta2):
-    return 0.307075*(z/a)/beta2*(math.log(2 * 511000.0 * beta2 / (1 - beta2)) - beta2 - ln_i_m)
-
-
-'''
-Below are DECT Processing Functions
-'''
-# Load circle locations from circle.json
-with open("circles.json") as f:
-    circle_data = json.load(f)
-
-# Load DICOM image
-def load_dicom_image(dicom_path):
-    dicom_data = pydicom.dcmread(dicom_path)
-    image = dicom_data.pixel_array
-    return image, dicom_data
-
-# Convert pixel data to HU  values
-def helper_apply_modality_lut(image, dicom_data):
-    slope = dicom_data.RescaleSlope
-    intercept = dicom_data.RescaleIntercept
-    hu_image = image * slope + intercept
-    return hu_image
-
-# Calculate mean HU in each circle
-def calculate_mean_pixel_value(image, circle):
-    x, y, radius = circle
-    mask = np.zeros(image.shape, dtype=np.uint8)
-    cv2.circle(mask, (x, y), radius, 1, thickness=-1)
-    pixel_values = image[mask == 1]
-    mean_value = np.mean(pixel_values)
-    return mean_value
-
-# Categorize HU value
-def categorize_hu_value(hu_value):
-    for material, (min_hu, max_hu) in HU_CATEGORIES.items():
-        if min_hu <= hu_value <= max_hu:
-            return material
-    return "unknown"
-
-# Saves DICOM file as png
-def save_dicom_as_png(dicom_path: str, save_path: str):
-    image, _ = load_dicom_image(dicom_path)
-    img = (image - np.min(image)) / (np.max(image) - np.min(image)) * 255
-    img = img.astype(np.uint8)
-    pil_image = Image.fromarray(img)
-    pil_image.save(save_path, "PNG")
-
-def process_and_save_circles(image_path, percentage, circles_data, output_path):
-    # Read the image
-    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if image is None:
-        raise ValueError(f"Could not read image: {image_path}")
-
-    # Convert to 8-bit image and draw circles
-    image_8bit = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
-    for circle in circles_data:
-        center_x, center_y, default_radius = circle["x"], circle["y"], circle["radius"]
-        # Scale the radius based on the percentage provided
-        final_radius = int(default_radius * (int(percentage) / 100))
-        cv2.circle(image_8bit, (center_x, center_y),
-                   final_radius, (255, 0, 0), 2)
-
-    # Save the processed image
-    cv2.imwrite(str(output_path), image_8bit)
-
-def draw_and_calculate_circles(image, saved_circles, radii_ratios, dicom_data):
-    hu_image = helper_apply_modality_lut(image, dicom_data)
-    logging.info(f"HU IMAGE: {hu_image}")
-    mean_hu_values = []
-    logging.info(f"RATIOS: {radii_ratios}")
-    for circle in saved_circles:
-        x, y, radius = circle["x"], circle["y"], circle["radius"]
-        logging.info(f"Circle data \n X: {circle['x']} \n Y: {circle['y']}\n Radius: {circle['radius']}")
-        new_radius = int(radius * radii_ratios)
-        logging.info(f"New radius: {new_radius}")
-        mean_hu_value = calculate_mean_pixel_value(hu_image, (x, y, new_radius))
-        mean_hu_values.append(mean_hu_value)
-
-    return mean_hu_values
-
-# Find DICOM files from uploaded directry
-def find_first_dicom_file():
-    processed_images_dir = Path(IMAGES_DIR)
-    for user_folder in processed_images_dir.iterdir():
-        if user_folder.is_dir():
-            for subfolder in user_folder.iterdir():
-                if subfolder.is_dir():
-                    dicom_files = sorted(subfolder.glob("*.dcm"))
-                    if dicom_files:
-                        # Return the first DICOM file found
-                        return str(dicom_files[0])
-    return None
-
-# Determine material category from HU
-def determine_materials(hu_values):
-    materials = []
-    for hu in hu_values:
-        material = "unknown"
-        for mat, (min_hu, max_hu) in HU_CATEGORIES.items():
-            if min_hu <= hu <= max_hu:
-                material = mat
-                break
-        materials.append(material)
-    return materials
-
-# Alternate HU calculation
-def calculate_hu(material_mu, water_mu):
-    return ((material_mu - water_mu) / water_mu) * 100
-
-
+SUPPORTED_MODELS = load_json("supported_models.json")
+HU_CATEGORIES = load_json("hu_categories.json")
+ELEMENT_PROPERTIES = load_json("element_properties.json")
+MATERIAL_PROPERTIES = load_json("material_properties.json")
+CIRCLE_DATA = load_json("circles.json")
+WATER_ATTENUATION = load_json("water_att.json")
+ELEMENT_ATOMIC_NUMBERS = load_json("atomic_numbers.json")
 '''
 API CALLS
 '''
@@ -409,14 +68,17 @@ async def upload_scan(files: List[UploadFile] = File(...)):
     high_kvp_files = []
     low_kvp_files = []
     slice_thickness = None
+    ref_dcm = pydicom.dcmread(dicom_files[0])
+    ref_kvp = ref_dcm.get("KVP")
 
     for dicom_file in dicom_files:
         dicom_data = pydicom.dcmread(dicom_file)
         kvp = dicom_data.get("KVP")
+
         if slice_thickness is None:
             slice_thickness = dicom_data.get("SliceThickness")
-
-        if kvp > 80:  # Assuming high kVp > 80
+        
+        if kvp >= ref_kvp:
             high_kvp_files.append(dicom_file)
         else:
             low_kvp_files.append(dicom_file)
@@ -462,9 +124,9 @@ async def update_circles(request: Request):
         raise HTTPException(status_code=400, detail="Missing phantom_type.")
 
     # Get circle locations for the specified phantom type
-    if phantom_type not in circle_data:
+    if phantom_type not in CIRCLE_DATA:
         raise HTTPException(status_code=400, detail="Invalid phantom type.")
-    circles_data = circle_data[phantom_type]
+    circles_data = CIRCLE_DATA[phantom_type]
 
     updated_high_images = []
     updated_low_images = []
@@ -497,7 +159,7 @@ async def update_circles(request: Request):
 # Return supported models
 @app.get("/get-supported-models")
 async def get_supported_models():
-    return JSONResponse(supported_models)
+    return JSONResponse(SUPPORTED_MODELS)
 
 @app.post("/analyze-inserts")
 async def analyze_inserts(request: Request):
@@ -505,67 +167,253 @@ async def analyze_inserts(request: Request):
     radii_ratios = data.get("radius", [1.0])
     radii_ratios = int(radii_ratios) / 100
     phantom_type = data.get("phantom")
-    saved_circles = circle_data[phantom_type]
+    saved_circles = CIRCLE_DATA[phantom_type]
+    # Assume that we pass in the method type
+    method_type = data.get("model")
 
-    dicom_file_path = find_first_dicom_file()
-    if not dicom_file_path:
+    # dicom_file_path = find_first_dicom_file()
+    high_path, low_path = find_dicom_files()
+    
+    if not high_path or not low_path:
         raise HTTPException(
             status_code=404, detail="No DICOM files found in the directory structure")
-
+    
     # Load the DICOM image and convert pixel values to HU values
-    image, dicom_data = load_dicom_image(dicom_file_path)
-    mean_hu_values = []
-    materials = []
+    high_image, dicom_datah = load_dicom_image(high_path)
+    low_image, dicom_datal = load_dicom_image(low_path)
+
+    high_hu = []
+    low_hu = []
     for circle in saved_circles:
         x, y, radius = circle["x"], circle["y"], circle["radius"]
-        mask = np.zeros(image.shape, dtype=np.uint8)
+        mask = np.zeros(high_image.shape, dtype=np.uint8)
         cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
-        pixel_values = image[mask == 1]
-        mean_hu = np.mean(pixel_values)
-        mean_hu_values.append(mean_hu)
+        high_pixel_values = high_image[mask == 1]
+        low_pixel_values = low_image[mask == 1]
+
+        high_hu.append(np.mean(high_pixel_values))
+        low_hu.append(np.mean(low_pixel_values))
     
+    mean_hu_values = high_hu
+    
+    # mean_hu_values = []
+    # for a, b in zip(high_hu, low_hu):
+    #     mean_hu_values.append((a+b)/2)
 
     results = []
-    for hu in mean_hu_values:
-        rho_e = rho_e_saito(hu)
-        materials.append(categorize_hu_value(hu))
+    # From here, everything should be done in a switch-case
+    if method_type == 'Saito':
+        iter = 0
+        for i, hu in enumerate(mean_hu_values):
+            # Calculate uncalibrated electron density
+            rho_e = rho_e_saito(hu)
         
-    for material in materials:
-        # Estimate effective atomic number (Z_eff) and stopping power for each material
-        material_results = []
-        logging.info(material)
+            # Use Saito's methods to compute linear attenuation coefficients
+            mu_l = mew_saito(low_hu)
+            mu_h = mew_saito(high_hu)
+            for i in range(len(mu_h)):
+                mu_h[i] += 1
 
-        if material in MATERIAL_PROPERTIES:
-            material_info = MATERIAL_PROPERTIES[material]
+            # Get the attenuation coefficient of water at the energy spectra
+            water_mu_h = WATER_ATTENUATION.get(str(dicom_datah.KVP))
+            water_mu_l = WATER_ATTENUATION.get(str(dicom_datal.KVP))
+
+            # Calculate alpha
+            alpha = alpha_saito(mu_l, mu_h, water_mu_l, water_mu_h, rho_e)
             
-            # linear attenuation of the material
-            mu_m = linear_attenuation(material_info)
-            # alpha and z_eff for the material
-            alpha = alpha_saito(mu_m, rho_e)
-            z_eff = z_eff_saito(alpha, [ELEMENT_PROPERTIES[element]["number"] for element in material_info["composition"]])
+            # Calibrated rho calculation
+            beta = float(data.get("beta"))
+            rho_e_cal = rho_e_calibrated_saito(hu, alpha[iter], beta)
             
-            # calculate stopping power
-            a = sum(fraction * ELEMENT_PROPERTIES[element]["mass"] for element, fraction in material_info["composition"].items())
-            ln_i_m = ln_mean_excitation_potential(z_eff)
-            beta2 = 0.01 # modify if known
-            sp_ratio = sp_truth(z_eff, a, ln_i_m, beta2)
+            # Effective atomic number calculation
+            lam = 10.98
+            z_eff = z_eff_saito(mu_h, lam, rho_e_cal)
+        
+            # Categorize materials based on HU
+            material = categorize_hu_value(hu)
             
-            # Append the calculated data for this material insert
+            # Calculate stopping power
+            spr = None
+            if material in MATERIAL_PROPERTIES:
+                material_info = MATERIAL_PROPERTIES[material]
+                a = sum(
+                    fraction * ELEMENT_PROPERTIES[element]["mass"]
+                    for element, fraction in material_info["composition"].items()
+                )
+                ln_i_m = ln_mean_excitation_potential(z_eff)
+                
+                # Calculate beta2 (velocity / speed of sound)
+                velocity = 299792458 * math.sqrt(1 - ((0.511 / (dicom_datah.KVP + 0.511)) ** 2))
+                beta2 = velocity / 299792458
+                
+                spr = sp_truth(z_eff, a, ln_i_m, beta2, dicom_datah.KVP)
+            
+            # Append results
             results.append({
-                "mean_hu_value": hu,
+            "material": material,
+            "rho_e": rho_e,
+            "z_eff": z_eff,
+            "stopping_power": spr,
+            "alpha": alpha[iter],
+            "beta": beta,
+            "lambda": lam
+        })
+            iter += 1
+    elif method_type == 'Hunemohr':
+        c = float(data.get('beta'))
+        for i, (hu_h, hu_l) in enumerate(zip(high_hu, low_hu)):
+            # Ensure HU values are scalars
+            hu_h = float(hu_h)  # Convert NumPy type to Python float
+            hu_l = float(hu_l)
+
+            # Compute electron density using Hunemohr equation
+            rho_e = rho_e_hunemohr(hu_h, hu_l, c)
+            
+            # Identify material from HU
+            material = categorize_hu_value(hu_h)
+            logging.info(f"Material Identified: {material}")
+            # Compute Z_eff using Hunemohr's method
+            if material in MATERIAL_PROPERTIES:
+                material_info = MATERIAL_PROPERTIES[material]
+                n_i = np.array(list(material_info["composition"].values()))
+                Z_i = np.array([ELEMENT_ATOMIC_NUMBERS[element] for element in material_info["composition"]])
+
+                Z_eff = z_eff_hunemohr(n_i, Z_i)
+                logging.info(f"Effective atomic number for {material} is {Z_eff}")
+                # Compute stopping power ratio
+                spr = spr_hunemohr(rho_e, Z_eff, dicom_datah.KVP)
+                logging.info(f"Stopping power for {material} is {spr}")
+            else:
+                logging.info("No material found")
+                Z_eff, spr = None, None
+            
+            results.append({
+                "material": material,
+                "rho_e": rho_e,
+                "z_eff": Z_eff,
+                "stopping_power": spr
+            })
+            
+    return JSONResponse({"results": [{k: convert_numpy(v) for k, v in res.items()} for res in results]})
+
+# Test calibration
+@app.post("/test-calibration")
+async def test_calibration(
+    alpha: str = Form(...),
+    beta: str = Form(...),
+    lambda_val: str = Form(...),
+    method: str = Form(...),
+    files: List[UploadFile] = File(...)
+):
+    # Create test upload directory
+    test_folder = os.path.join(IMAGES_DIR, "test_calibration")
+    os.makedirs(test_folder, exist_ok=True)
+
+    # Save uploaded files
+    for file in files:
+        file_path = os.path.join(test_folder, file.filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+    # **Parse JSON strings into lists of floats**
+    try:
+        # Convert string to a list by splitting on commas and stripping spaces
+        alpha_list = [float(a.strip()) for a in alpha.split(",")]
+        beta_list = [float(b.strip()) for b in beta.split(",")]
+        lambda_list = [float(l.strip()) for l in lambda_val.split(",")]
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid JSON format: {str(e)}")
+
+    # Run calibration test logging using parsed parameters
+    new_results = perform_test_calibration(
+        test_folder, alpha_list, beta_list, lambda_list, method)
+
+    return {"new_table": new_results}
+
+
+def perform_test_calibration(folder_path, alpha, beta, lambda_val, method):
+    """
+    Perform test calibration using the given method, calibration parameters, and DICOM scan.
+    """
+    high_path, low_path = find_dicom_files(folder_path)
+
+    if not high_path or not low_path:
+        raise HTTPException(
+            status_code=404, detail="No DICOM files found in the directory structure.")
+
+    # Load DICOM images and convert pixel values to HU values
+    high_image, dicom_datah = load_dicom_image(high_path)
+    low_image, dicom_datal = load_dicom_image(low_path)
+
+    # Extract mean HU values from defined circular regions
+    saved_circles = CIRCLE_DATA.get("head")  # Adjust based on phantom type
+    radii_ratios = 1.0  # Assume default ratio for testing
+
+    high_hu, low_hu = [], []
+    for circle in saved_circles:
+        x, y, radius = circle["x"], circle["y"], circle["radius"]
+        mask = np.zeros(high_image.shape, dtype=np.uint8)
+        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        high_pixel_values = high_image[mask == 1]
+        low_pixel_values = low_image[mask == 1]
+
+        high_hu.append(np.mean(high_pixel_values))
+        low_hu.append(np.mean(low_pixel_values))
+
+    mean_hu_values = high_hu  # Assuming using high kVp HU for material classification
+
+    results = []
+
+    # Determine calculation method
+    if method == "Saito":
+        iter = 0
+        for i, hu in enumerate(mean_hu_values):
+            rho_e = rho_e_saito(hu)
+            mu_h = mew_saito(high_hu[i]) + 1  # Offset by 1 for correction
+
+            # Calculate calibrated rho_e
+            rho_e_cal = rho_e_calibrated_saito(hu, alpha[iter], beta[iter])
+
+            # Calculate z_eff
+            z_eff = z_eff_saito(mu_h, lambda_val[iter], rho_e_cal)
+
+            # Identify material
+            material = categorize_hu_value(hu)
+
+            # Calculate stopping power ratio
+            spr = None
+            if material in MATERIAL_PROPERTIES:
+                material_info = MATERIAL_PROPERTIES[material]
+                a = sum(
+                    fraction * ELEMENT_PROPERTIES[element]["mass"]
+                    for element, fraction in material_info["composition"].items()
+                )
+                ln_i_m = ln_mean_excitation_potential(z_eff)
+
+                velocity = 299792458 * \
+                    math.sqrt(1 - ((0.511 / (dicom_datah.KVP + 0.511)) ** 2))
+                beta2 = velocity / 299792458
+
+                spr = sp_truth(z_eff, a, ln_i_m, beta2, dicom_datah.KVP)
+
+            # Store results
+            results.append({
                 "material": material,
                 "rho_e": rho_e,
                 "z_eff": z_eff,
-                "stopping_power": sp_ratio
+                "stopping_power": spr,
+                "alpha": alpha[iter],
+                "beta": beta[iter],
+                "lambda": lambda_val[iter]
             })
-        else:
-            # If material is unknown, append the HU and indicate that details are unknown
-            results.append({
-                "mean_hu_value": hu,
-                "material": "unknown",
-                "rho_e": None,
-                "z_eff": None,
-                "stopping_power": None
-            })
+            iter += 1
+    elif method == "BVM":
+        # Placeholder for BVM calculations
+        logging.info("BVM method selected but not implemented.")
 
-    return JSONResponse({"results": results})
+    else:
+        raise HTTPException(
+            status_code=400, detail=f"Method {method} not supported.")
+
+    return [{"material": res["material"], "rho_e": res["rho_e"], "z_eff": res["z_eff"], "stopping_power": res["stopping_power"]} for res in results]

@@ -1,0 +1,12 @@
+{
+  "Cortical Bone": [1000, "inf"],
+  "Brain": [30, 40],
+  "Liver": [45, 50],
+  "Lung": [-950, -650],
+  "Muscle": [45, 50],
+  "Adipose": [-150, -50],
+  "True Water": [0, 0],
+  "Solid Water": [0, 0],
+  "Breast": [41, 134],
+  "Air": [-1000, -1]
+}

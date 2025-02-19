@@ -1,0 +1,72 @@
+{
+    "H": {
+        "number": 1,
+        "mass": 1.00794,
+        "ionization": 19.2
+    },
+    "B": {
+        "number": 5,
+        "mass": 10.811,
+        "ionization": 76
+    },
+    "C": {
+        "number": 6,
+        "mass": 12.0107,
+        "ionization": 78
+    },
+    "N": {
+        "number": 7,
+        "mass": 14.0067,
+        "ionization": 82
+    },
+    "O": {
+        "number": 8,
+        "mass": 15.9994,
+        "ionization": 95
+    },
+    "F": {
+        "number": 9,
+        "mass": 18.998,
+        "ionization": 115
+    },
+    "Na": {
+        "number": 11,
+        "mass": 22.98977,
+        "ionization": 149
+    },
+    "Mg": {
+        "number": 12,
+        "mass": 24.305,
+        "ionization": 156
+    },
+    "Al": {
+        "number": 13,
+        "mass": 26.9815,
+        "ionization": 166
+    },
+    "Si": {
+        "number": 14,
+        "mass": 28.0855,
+        "ionization": 173
+    },
+    "P": {
+        "number": 15,
+        "mass": 30.9738,
+        "ionization": 173
+    },
+    "Cl": {
+        "number": 17,
+        "mass": 35.453,
+        "ionization": 174
+    },
+    "Ca": {
+        "number": 20,
+        "mass": 40.078,
+        "ionization": 191
+    },
+    "Ti": {
+        "number": 22,
+        "mass": 47.867,
+        "ionization": 233
+    }
+}
