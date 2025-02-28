@@ -3,134 +3,160 @@
         {
             "x": 202,
             "y": 310,
-            "radius": 15
+            "radius": 15,
+            "material": "30% CaCO3"
         },
         {
             "x": 202,
             "y": 200,
-            "radius": 15
+            "radius": 15,
+            "material": "Liver"
         },
         {
             "x": 332,
             "y": 254,
-            "radius": 15
+            "radius": 15,
+            "material": "Lung"
         },
         {
             "x": 256,
             "y": 332,
-            "radius": 14
+            "radius": 14,
+            "material": "Breast"
         },
         {
             "x": 178,
             "y": 256,
-            "radius": 14
+            "radius": 14,
+            "material": "Lung"
         },
         {
             "x": 256,
             "y": 254,
-            "radius": 14
+            "radius": 14,
+            "material": "Cortical Bone"
         },
         {
             "x": 256,
             "y": 294,
-            "radius": 14
+            "radius": 14,
+            "material": "Adipose"
         },
         {
             "x": 310,
             "y": 310,
-            "radius": 14
+            "radius": 14,
+            "material": "Brain"
         },
         {
             "x": 256,
             "y": 178,
-            "radius": 14
+            "radius": 14,
+            "material": "Inner Bone"
         },
         {
             "x": 310,
             "y": 200,
-            "radius": 14
+            "radius": 14,
+            "material": "50% CaCO3"
         }
     ],
     "body": [
         {
             "x": 178,
             "y": 254,
-            "radius": 15
+            "radius": 15,
+            "material": "Lung"
         },
         {
             "x": 310,
             "y": 310,
-            "radius": 15
+            "radius": 15,
+            "material": "Brain"
         },
         {
             "x": 332,
             "y": 256,
-            "radius": 15
+            "radius": 15,
+            "material": "Lung"
         },
         {
             "x": 356,
             "y": 356,
-            "radius": 15
+            "radius": 15,
+            "material": "Solid Water"
         },
         {
             "x": 154,
             "y": 154,
-            "radius": 15
+            "radius": 15,
+            "material": "Solid Water"
         },
         {
             "x": 154,
             "y": 356,
-            "radius": 14
+            "radius": 14,
+            "material": "Solid Water"
         },
         {
             "x": 254,
             "y": 332,
-            "radius": 14
+            "radius": 14,
+            "material": "Breast"
         },
         {
             "x": 200,
             "y": 310,
-            "radius": 14
+            "radius": 14,
+            "material": "30% CaCO3"
         },
         {
             "x": 256,
             "y": 178,
-            "radius": 14
+            "radius": 14,
+            "material": "Inner Bone"
         },
         {
             "x": 310,
             "y": 200,
-            "radius": 14
+            "radius": 14,
+            "material": "50% CaCO3"
         },
         {
             "x": 398,
             "y": 254,
-            "radius": 14
+            "radius": 14,
+            "material": "Solid Water"
         },
         {
             "x": 112,
             "y": 254,
-            "radius": 14
+            "radius": 14,
+            "material": "Solid Water"
         },
         {
             "x": 356,
             "y": 154,
-            "radius": 14
+            "radius": 14,
+            "material": "Solid Water"
         },
         {
             "x": 256,
             "y": 294,
-            "radius": 14
+            "radius": 14,
+            "material": "Adipose"
         },
         {
             "x": 202,
             "y": 200,
-            "radius": 14
+            "radius": 14,
+            "material": "Liver"
         },
         {
             "x": 256,
             "y": 254,
-            "radius": 14
+            "radius": 14,
+            "material": "Cortical Bone"
         }
     ]
 }
