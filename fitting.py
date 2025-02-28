@@ -28,12 +28,22 @@ def rho_e_calc(delta_HU, a, b):
 def reduce_ct(HU):
     return HU/1000 + 1
 
-# Saito 2017a Eq. 8 - Effective Atomic Number
+# Saito 2017a Eq. 8 - Effective Atomic Number Ratio
 def zeff(gamma, ct, rho):
     return gamma * ((ct/rho) - 1)
 
+# Hunemohr 2014 Eq. 21 - Effective Atomic Number
+def zeff_hunemohr(n_i, Z_i, n=3.1):
+    num = np.sum(n_i * (Z_i ** (n + 1)))
+    den = np.sum(n_i * Z_i)
+    return (num / den) ** (1 / n)
+
 # Load circle data
 CIRCLE_DATA = load_json("circles.json")
+# Load material data
+MATERIAL_PROPERTIES = load_json("material_properties.json")
+# Loat atomic number data
+ATOMIC_NUMBERS = load_json("atomic_numbers.json")
 
 # True electron densities (ρe) for materials
 TRUE_RHO = {
@@ -53,7 +63,7 @@ TRUE_RHO = {
     "Air": 0
 }
 
-# Optimize alpha to match true electron density using Saito 2017a formula
+# Optimize alpha to match true electron density using Saito 2017a eq. 1 and eq. 2
 def optimize_alpha(HU_H, HU_L, true_rho):
     def objective(alpha):
         delta_hu = delta_HU(alpha, HU_H, HU_L)
@@ -63,7 +73,7 @@ def optimize_alpha(HU_H, HU_L, true_rho):
     result = minimize_scalar(objective, bounds=(0, 1), method="bounded")
     return result.x  # Optimal alpha
 
-# Optimize a and b to match true electron density using Saito 2012 formula
+# Optimize a and b to match true electron density using Saito 2012 eq. 4
 def optimize_a_b(delta_HU, true_rho):
     def objective(params):
         a, b = params
@@ -73,6 +83,22 @@ def optimize_a_b(delta_HU, true_rho):
     initial_guess = [1, 1]
     result = minimize(objective, initial_guess, method="Nelder-Mead")
     return result.x  # Optimized [a, b]
+
+# Calculate Z_eff using Hunemohr 2014 eq. 21
+def calculate_z_eff_hunemohr(material):
+    composition = MATERIAL_PROPERTIES[material]["composition"]
+
+    elements = list(composition.keys())
+    fractions = np.array([composition[el] for el in elements])
+    atomic_numbers = np.array([ATOMIC_NUMBERS[el] for el in elements])
+
+    z_eff = zeff_hunemohr(fractions, atomic_numbers)
+    return z_eff
+
+# Optimize gamma to match true effective atomic number using Saito 2017a eq. 8
+def optimize_gamma(ct, rho):
+    def objective(gamma):
+        pass
 
 # Load DICOM images
 low_path = '/Users/royaparsa/Downloads/high-low/1.3.12.2.1107.5.1.4.83775.30000024051312040257200015808/test.dcm'  # 140 KVP
@@ -92,6 +118,8 @@ true_rhos = []
 materials_list = []
 optimized_alphas = []
 optimized_as, optimized_bs = [], []
+calculated_z_effs = []
+true_z_effs = []
 
 for circle in saved_circles:
     x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
@@ -101,7 +129,8 @@ for circle in saved_circles:
         continue
 
     true_rho = TRUE_RHO[material]
-
+    true_z_eff = MATERIAL_PROPERTIES[material]["Z_eff"]
+    
     # Mask for circular region
     mask = np.zeros(high_image.shape, dtype=np.uint8)
     cv2.circle(mask, (x, y), int(radius), 1, thickness=-1)
@@ -133,9 +162,14 @@ for circle in saved_circles:
     calculated_rhos.append(calculated_rho)
     true_rhos.append(true_rho)
     materials_list.append(material)
+    
+    # Step 5: Calculate effective atomic numbers using material properties
+    calculated_z_eff = calculate_z_eff_hunemohr(material)
+    calculated_z_effs.append(calculated_z_eff)
+    true_z_effs.append(true_z_eff)
 
-# Plot results
-plt.figure(figsize=(10, 6))
+# Plot Electron Density
+plt.figure(figsize=(12, 6))
 plt.scatter(materials_list, true_rhos,
             label="True Electron Density", color='blue', marker='o')
 plt.scatter(materials_list, calculated_rhos,
@@ -143,14 +177,27 @@ plt.scatter(materials_list, calculated_rhos,
 
 plt.xlabel("Material")
 plt.ylabel("Electron Density")
-plt.title("Comparison of True and Calculated Electron Density for Each Insert (With Optimized a, b)")
+plt.title("Comparison of True and Calculated Electron Density for Each Insert (Optimized a, b)")
 plt.xticks(rotation=45)
 plt.legend()
 plt.grid()
 
-# Show plot
+# Plot Z_eff
+plt.figure(figsize=(12, 6))
+plt.scatter(materials_list, true_z_effs,
+            label="True Z_eff", color='green', marker='o')
+plt.scatter(materials_list, calculated_z_effs,
+            label="Hunemohr Calculated Z_eff", color='orange', marker='x')
+
+plt.xlabel("Material")
+plt.ylabel("Z_eff")
+plt.title("Comparison of True and Calculated Z_eff for Each Insert (Hunemohr)")
+plt.xticks(rotation=45)
+plt.legend()
+plt.grid()
+
 plt.show()
 
-# Optional: Print optimized a and b for each material
+# Print optimized a and b
 for mat, a, b in zip(materials_list, optimized_as, optimized_bs):
     print(f"Material: {mat}, Optimized a: {a:.4f}, Optimized b: {b:.4f}")
