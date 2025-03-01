@@ -28,12 +28,16 @@ def rho_e_calc(delta_HU, a, b):
 def reduce_ct(HU):
     return HU/1000 + 1
 
-# Saito 2017a Eq. 8 - Effective Atomic Number Ratio
-def zeff(gamma, ct, rho):
+# Saito 2017a Eq. 8 - LHS
+def zeff_lhs(zeff):
+    return (zeff / 7.45) ** 3.3
+
+# Saito 2017a Eq. 8 - RHS
+def zeff_rhs(gamma, ct, rho):
     return gamma * ((ct/rho) - 1)
 
 # Hunemohr 2014 Eq. 21 - Effective Atomic Number
-def zeff_hunemohr(n_i, Z_i, n=3.1):
+def zeff_hunemohr(n_i, Z_i, n=1):
     num = np.sum(n_i * (Z_i ** (n + 1)))
     den = np.sum(n_i * Z_i)
     return (num / den) ** (1 / n)
@@ -96,9 +100,15 @@ def calculate_z_eff_hunemohr(material):
     return z_eff
 
 # Optimize gamma to match true effective atomic number using Saito 2017a eq. 8
-def optimize_gamma(ct, rho):
+def calculate_optimized_gamma(ct, rho, z_eff):
+    lhs = zeff_lhs(z_eff)
+    
     def objective(gamma):
-        pass
+        rhs = zeff_rhs(gamma, ct, rho)
+        return (lhs - rhs)**2
+    
+    result = minimize_scalar(objective, bounds=(0,20), method="bounded")
+    return result.x
 
 # Load DICOM images
 low_path = '/Users/royaparsa/Downloads/high-low/1.3.12.2.1107.5.1.4.83775.30000024051312040257200015808/test.dcm'  # 140 KVP
@@ -120,6 +130,9 @@ optimized_alphas = []
 optimized_as, optimized_bs = [], []
 calculated_z_effs = []
 true_z_effs = []
+optimized_gammas = []
+true_z_ratios = []
+calculated_z_ratios = []
 
 for circle in saved_circles:
     x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
@@ -167,36 +180,85 @@ for circle in saved_circles:
     calculated_z_eff = calculate_z_eff_hunemohr(material)
     calculated_z_effs.append(calculated_z_eff)
     true_z_effs.append(true_z_eff)
+    
+    # Step 6: Optimize gamma for Z_eff_w ratio
+    true_z_ratio = zeff_lhs(calculated_z_eff)
+    true_z_ratios.append(true_z_ratio)
+    reduced_ct = reduce_ct(mean_low_hu)
+    optimal_gamma = calculate_optimized_gamma(reduced_ct, calculated_rho, calculated_z_eff)
+    optimized_gammas.append(optimal_gamma)
+    
+    z_ratio = zeff_rhs(optimal_gamma, reduced_ct, calculated_rho)
+    calculated_z_ratios.append(z_ratio)
 
-# Plot Electron Density
-plt.figure(figsize=(12, 6))
-plt.scatter(materials_list, true_rhos,
-            label="True Electron Density", color='blue', marker='o')
-plt.scatter(materials_list, calculated_rhos,
-            label="Calculated Electron Density (optimized a, b)", color='red', marker='x')
 
-plt.xlabel("Material")
-plt.ylabel("Electron Density")
-plt.title("Comparison of True and Calculated Electron Density for Each Insert (Optimized a, b)")
-plt.xticks(rotation=45)
-plt.legend()
-plt.grid()
+# # Plot Z_eff
+# plt.figure(figsize=(12, 6))
+# plt.scatter(materials_list, true_z_effs,
+#             label="True Z_eff", color='green', marker='o')
+# plt.scatter(materials_list, calculated_z_effs,
+#             label="Hunemohr Calculated Z_eff", color='orange', marker='x')
 
-# Plot Z_eff
-plt.figure(figsize=(12, 6))
-plt.scatter(materials_list, true_z_effs,
-            label="True Z_eff", color='green', marker='o')
-plt.scatter(materials_list, calculated_z_effs,
-            label="Hunemohr Calculated Z_eff", color='orange', marker='x')
+# plt.xlabel("Material")
+# plt.ylabel("Z_eff")
+# plt.title("Comparison of True and Calculated Z_eff for Each Insert (Hunemohr)")
+# plt.xticks(rotation=45)
+# plt.legend()
+# plt.grid()
 
-plt.xlabel("Material")
-plt.ylabel("Z_eff")
-plt.title("Comparison of True and Calculated Z_eff for Each Insert (Hunemohr)")
-plt.xticks(rotation=45)
-plt.legend()
-plt.grid()
+# # Convert to numpy arrays for plotting
+# calculated_rhos = np.array(calculated_rhos)
+# true_rhos = np.array(true_rhos)
 
-plt.show()
+# # Calculate (rho_e_measured / rho_e_truth) - 1
+# rho_ratio_error = (calculated_rhos / true_rhos) - 1
+
+# # Plot (rho_e_measured / rho_e_truth) - 1 vs rho_e_truth
+# plt.figure(figsize=(10, 6))
+# plt.scatter(true_rhos, rho_ratio_error, color='teal', marker='o')
+
+# plt.axhline(0, color='gray', linestyle='--', linewidth=1)  # Reference line at zero
+# plt.xlabel("True Electron Density (ρe)")
+# plt.ylabel("(ρe_measured / ρe_truth) - 1")
+# plt.title("Relative Error in Electron Density vs. True Electron Density")
+# plt.grid(True)
+# plt.show()
+
+# # Convert to numpy arrays for plotting
+# calculated_z_effs = np.array(calculated_z_effs)
+# true_z_effs = np.array(true_z_effs)
+
+# # Calculate (calculated_z_effs / true_z_effs) - 1
+# z_eff_ratio_error = (calculated_z_effs / true_z_effs) - 1
+
+# # Plot (z_eff_measured / z_eff_truth) - 1 vs z_eff_truth
+# plt.figure(figsize=(10, 6))
+# plt.scatter(true_z_effs, z_eff_ratio_error, color='teal', marker='o')
+
+# plt.axhline(0, color='gray', linestyle='--', linewidth=1)  # Reference line at zero
+# plt.xlabel("True Effective Atomic Number (Zeff)")
+# plt.ylabel("(zeff_measured / zeff_truth) - 1")
+# plt.title("Relative Error in Effective Atomic Number vs. True Effective Atomic Number")
+# plt.grid(True)
+# plt.show()
+
+# # Convert to numpy arrays for plotting
+# calculated_z_ratios = np.array(calculated_z_ratios)
+# true_z_ratios = np.array(true_z_ratios)
+
+# # Calculate (z_eff_ratio_measured / z_eff_ratio_truth) - 1
+# z_ratio_error = (calculated_z_ratios / true_z_ratios) - 1
+
+# # Plot (z_eff_ratio_measured / z_eff_ratio_truth) - 1 vs z_eff_ratio_truth
+# plt.figure(figsize=(10, 6))
+# plt.scatter(true_z_ratios, z_ratio_error, color='teal', marker='o')
+
+# plt.axhline(0, color='gray', linestyle='--', linewidth=1)  # Reference line at zero
+# plt.xlabel("True Z Ratio")
+# plt.ylabel("(calculated_z_ratios / true_z_ratios) - 1")
+# plt.title("Relative Error in Calculated Z Ratio vs True Z Ratio")
+# plt.grid(True)
+# plt.show()
 
 # Print optimized a and b
 for mat, a, b in zip(materials_list, optimized_as, optimized_bs):
