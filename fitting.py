@@ -1,3 +1,4 @@
+from scipy.optimize import minimize_scalar
 import pydicom
 import cv2
 import json
@@ -42,12 +43,33 @@ def zeff_hunemohr(n_i, Z_i, n=1):
     den = np.sum(n_i * Z_i)
     return (num / den) ** (1 / n)
 
+# True Mean Excitation Energy (Courtesy of Milo V.)
+def i_truth(weight_fractions, Z_eff, A, I):
+    return sum(weight_fractions * Z_eff / A * np.log(I)) / sum(weight_fractions * Z_eff / A)
+
+# Tanaka 2020 Eq. 6 - Mean Excitation Energy
+def i_tanaka(z_ratio, c0, c1):
+    return c1 * (z_ratio - 1) - c0
+
+# Tanaka 2020 Eq. 1 - Stopping Power
+def spr_tanaka(rho, mean_excitation):
+    '''
+    rho: electron density ratio to water
+    I, Iw: Mean excitation energies of the material and water
+    me: rest electron mass
+    c: speed of light in a vacuum
+    beta: speed of the projectile proton relative to that of light
+    '''
+    pass
+
 # Load circle data
 CIRCLE_DATA = load_json("circles.json")
 # Load material data
 MATERIAL_PROPERTIES = load_json("material_properties.json")
 # Loat atomic number data
 ATOMIC_NUMBERS = load_json("atomic_numbers.json")
+# Load elemental properties data
+ELEMENTAL_PROPERTIES = load_json("element_properties.json")
 
 # True electron densities (ρe) for materials
 TRUE_RHO = {
@@ -110,6 +132,39 @@ def calculate_optimized_gamma(ct, rho, z_eff):
     result = minimize_scalar(objective, bounds=(0,20), method="bounded")
     return result.x
 
+# Minimize the difference between calculated and true Z_eff
+def optimize_n_for_hunemohr(fractions, atomic_numbers, true_z_eff):
+    def objective(n):
+        calculated_z_eff = zeff_hunemohr(fractions, atomic_numbers, n)
+        return (calculated_z_eff - true_z_eff)**2  # Squared error
+
+    result = minimize_scalar(objective, bounds=(0.5, 3), method="bounded")
+
+    optimal_n = result.x
+    return zeff_hunemohr(fractions, atomic_numbers, optimal_n), optimal_n
+
+def calculate_optimized_z_eff_hunemohr(material, true_z_eff):
+    composition = MATERIAL_PROPERTIES[material]["composition"]
+
+    elements = list(composition.keys())
+    fractions = np.array([composition[el] for el in elements])
+    atomic_numbers = np.array([ATOMIC_NUMBERS[el] for el in elements])
+
+    z_eff, optimal_n = optimize_n_for_hunemohr(
+        fractions, atomic_numbers, true_z_eff)
+    return z_eff, optimal_n
+
+# Optimize c0 and c1 to match the true mean excitation energies
+def optimize_c(ionization, z_ratio):
+    def objective(params):
+        c0, c1 = params
+        calc_i = i_tanaka(z_ratio, c0, c1)
+        return (calc_i - ionization) ** 2
+       
+    initial_guess = [100, 50]
+    result = minimize(objective, initial_guess, method = 'Nelder-Mead')
+    return result.x
+
 # Load DICOM images
 low_path = '/Users/royaparsa/Downloads/high-low/1.3.12.2.1107.5.1.4.83775.30000024051312040257200015808/test.dcm'  # 140 KVP
 high_path = '/Users/royaparsa/Downloads/high-low/1.3.12.2.1107.5.1.4.83775.30000024051312040257200019235/test.dcm'  # 70 KVP
@@ -122,17 +177,15 @@ low_image = dicom_data_l.pixel_array
 
 # Process head phantom
 saved_circles = CIRCLE_DATA["head"]
-
-calculated_rhos = []
-true_rhos = []
 materials_list = []
+
+calculated_rhos, true_rhos = [], []
 optimized_alphas = []
 optimized_as, optimized_bs = [], []
-calculated_z_effs = []
-true_z_effs = []
+calculated_z_effs, true_z_effs = [], []
 optimized_gammas = []
-true_z_ratios = []
-calculated_z_ratios = []
+true_z_ratios, calculated_z_ratios = [], []
+true_mean_excitation, calculated_mean_excitation = [], []
 
 for circle in saved_circles:
     x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
@@ -176,11 +229,13 @@ for circle in saved_circles:
     true_rhos.append(true_rho)
     materials_list.append(material)
     
-    # Step 5: Calculate effective atomic numbers using material properties
-    calculated_z_eff = calculate_z_eff_hunemohr(material)
+    # Step 5: Calculate optimized effective atomic numbers using material properties
+    calculated_z_eff, optimal_n = calculate_optimized_z_eff_hunemohr(material, true_z_eff)
     calculated_z_effs.append(calculated_z_eff)
     true_z_effs.append(true_z_eff)
-    
+
+    print(f"Material: {material}, Optimal n: {optimal_n:.4f}, Calculated Z_eff: {calculated_z_eff:.4f}, True Z_eff: {true_z_eff:.4f}")
+
     # Step 6: Optimize gamma for Z_eff_w ratio
     true_z_ratio = zeff_lhs(calculated_z_eff)
     true_z_ratios.append(true_z_ratio)
@@ -190,21 +245,42 @@ for circle in saved_circles:
     
     z_ratio = zeff_rhs(optimal_gamma, reduced_ct, calculated_rho)
     calculated_z_ratios.append(z_ratio)
+    
+    # Step 7: Calculate mean excitation energy
+    composition = MATERIAL_PROPERTIES[material]["composition"]
+    elements = list(composition.keys())
+    weight_fractions = np.array([composition[e] for e in elements])
+    
+    atomic_numbers = np.array([ELEMENTAL_PROPERTIES[e]["number"] for e in elements])
+    atomic_masses = np.array([ELEMENTAL_PROPERTIES[e]["mass"] for e in elements])
+    ionization_energies = np.array([ELEMENTAL_PROPERTIES[e]["ionization"] for e in elements])
+    
+    true_mean_i = i_truth(weight_fractions, atomic_numbers, atomic_masses, ionization_energies)
+    
+    true_mean_excitation.append(true_mean_i)
+    
+    # Step 8: Optimize c0 and c1 for mean excitation energy using Tanaka 2020 eq. 6
+    c0, c1 = optimize_c(true_mean_i, z_ratio)
+    i_tanaka_val = i_tanaka(z_ratio, c0, c1)
+    calculated_mean_excitation.append(i_tanaka_val)
+    
+    # Step 9: Calculate Stopping Power!
+    
 
 
-# # Plot Z_eff
+# Plot Z_eff
 # plt.figure(figsize=(12, 6))
 # plt.scatter(materials_list, true_z_effs,
-#             label="True Z_eff", color='green', marker='o')
+#             label="Hunemohr True Z_eff", color='green', marker='o')
 # plt.scatter(materials_list, calculated_z_effs,
-#             label="Hunemohr Calculated Z_eff", color='orange', marker='x')
-
+#             label="Calculated Z_eff", color='orange', marker='x')
 # plt.xlabel("Material")
 # plt.ylabel("Z_eff")
 # plt.title("Comparison of True and Calculated Z_eff for Each Insert (Hunemohr)")
 # plt.xticks(rotation=45)
 # plt.legend()
 # plt.grid()
+# plt.show()
 
 # # Convert to numpy arrays for plotting
 # calculated_rhos = np.array(calculated_rhos)
@@ -259,6 +335,31 @@ for circle in saved_circles:
 # plt.title("Relative Error in Calculated Z Ratio vs True Z Ratio")
 # plt.grid(True)
 # plt.show()
+# Plotting
+# plt.figure(figsize=(12, 6))
+# plt.scatter(materials_list, true_mean_excitation,label='True Mean Excitation Energy (I_truth)', color='green', marker='o')
+# plt.scatter(materials_list, calculated_mean_excitation, label='Calculated Mean Excitation Energy (Tanaka)', color='orange', marker='x')
+
+# plt.xlabel('Material')
+# plt.ylabel('Mean Excitation Energy (eV)')
+# plt.title('Comparison of True and Calculated Mean Excitation Energy')
+# plt.xticks(rotation=45, ha='right')
+# plt.legend()
+# plt.grid(True)
+# plt.show()
+
+calculated_mean_excitation = np.array(calculated_mean_excitation)
+true_mean_excitation = np.array(true_mean_excitation)
+i_ratio = (calculated_mean_excitation / true_mean_excitation) - 1
+plt.figure(figsize=(10, 6))
+plt.scatter(true_mean_excitation, i_ratio, color='teal', marker='o')
+
+plt.axhline(0, color='gray', linestyle='--', linewidth=1)  # Reference line at zero
+plt.xlabel("True Mean Excitation")
+plt.ylabel("(calculated_mean_excitation / true_mean_excitation) - 1")
+plt.title("Relative Error in Calculated Mean Excitation vs True Mean Excitation")
+plt.grid(True)
+plt.show()
 
 # Print optimized a and b
 for mat, a, b in zip(materials_list, optimized_as, optimized_bs):
