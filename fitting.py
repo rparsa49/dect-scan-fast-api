@@ -6,6 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize_scalar, minimize
 from pathlib import Path
+from scipy.constants import physical_constants
 
 DATA_DIR = Path("data")
 
@@ -51,8 +52,19 @@ def i_truth(weight_fractions, Z_eff, A, I):
 def i_tanaka(z_ratio, c0, c1):
     return c1 * (z_ratio - 1) - c0
 
+# Get I_material from ln I / Iw
+def get_I(mean_exciation):
+    return 75 * (np.e ** mean_exciation)
+
+# Beta Proton (Courtesy of Milo)
+def beta(kvp):
+    kinetic_energy_mev = kvp / 1000
+    proton_mass_mev = physical_constants['proton mass energy equivalent in MeV'][0]
+    gamma = (proton_mass_mev + kinetic_energy_mev) /  proton_mass_mev
+    return np.sqrt(1 - (1 / gamma ** 2))
+
 # Tanaka 2020 Eq. 1 - Stopping Power
-def spr_tanaka(rho, mean_excitation):
+def spr_tanaka(rho, I, beta):
     '''
     rho: electron density ratio to water
     I, Iw: Mean excitation energies of the material and water
@@ -60,8 +72,14 @@ def spr_tanaka(rho, mean_excitation):
     c: speed of light in a vacuum
     beta: speed of the projectile proton relative to that of light
     '''
-    pass
-
+    me = 9.10938356e-31 
+    c = 2.99792458e8
+    Iw = 75
+    
+    term1 = np.log(I/Iw)
+    term2 = np.log((2 * me * c ** 2 * beta ** 2) / (Iw * (1 - beta ** 2)))
+    return rho * (1 - (term1 / (term2 - beta ** 2)))
+    
 # Load circle data
 CIRCLE_DATA = load_json("circles.json")
 # Load material data
@@ -165,6 +183,31 @@ def optimize_c(ionization, z_ratio):
     result = minimize(objective, initial_guess, method = 'Nelder-Mead')
     return result.x
 
+# Get SPR from Tanaka
+def get_t_spr(material):
+    if material == 'Lung':
+        return 0.280
+    if material == 'Adipose':
+        return 0.947
+    if material == 'Breast':
+        return 0.973
+    if material == 'Solid Water':
+        return 0.997
+    if material == 'Water':
+        return 1.000
+    if material == 'Brain':
+        return 1.064
+    if material == 'Liver':
+        return 1.070
+    if material == 'Inner Bone':
+        return 1.088
+    if material == '30% CaCO3':
+        return 1.261
+    if material == '50% CaCO3':
+        return 1.427
+    if material == 'Cortical Bone':
+        return 1.621
+
 # Load DICOM images
 low_path = '/Users/royaparsa/Downloads/high-low/1.3.12.2.1107.5.1.4.83775.30000024051312040257200015808/test.dcm'  # 140 KVP
 high_path = '/Users/royaparsa/Downloads/high-low/1.3.12.2.1107.5.1.4.83775.30000024051312040257200019235/test.dcm'  # 70 KVP
@@ -186,6 +229,8 @@ calculated_z_effs, true_z_effs = [], []
 optimized_gammas = []
 true_z_ratios, calculated_z_ratios = [], []
 true_mean_excitation, calculated_mean_excitation = [], []
+sprs = []
+t_sprs = []
 
 for circle in saved_circles:
     x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
@@ -265,22 +310,26 @@ for circle in saved_circles:
     calculated_mean_excitation.append(i_tanaka_val)
     
     # Step 9: Calculate Stopping Power!
-    
+    I = get_I(i_tanaka_val)
+    beta2 = beta(dicom_data_l.KVP)
+    spr = spr_tanaka(calculated_rho, I, beta2)
+    sprs.append(spr)
 
+    tanaka_spr = get_t_spr(material)
+    t_sprs.append(tanaka_spr)
 
-# Plot Z_eff
-# plt.figure(figsize=(12, 6))
-# plt.scatter(materials_list, true_z_effs,
-#             label="Hunemohr True Z_eff", color='green', marker='o')
-# plt.scatter(materials_list, calculated_z_effs,
-#             label="Calculated Z_eff", color='orange', marker='x')
-# plt.xlabel("Material")
-# plt.ylabel("Z_eff")
-# plt.title("Comparison of True and Calculated Z_eff for Each Insert (Hunemohr)")
-# plt.xticks(rotation=45)
-# plt.legend()
-# plt.grid()
-# plt.show()
+print(f"TANAKA SPR: {t_sprs}")
+# Plot spr
+plt.figure(figsize=(12, 6))
+plt.scatter(materials_list, sprs,
+            label="Calculated Z_eff", color='orange', marker='x')
+plt.xlabel("Material")
+plt.ylabel("SPR")
+plt.title("SPR for each Material")
+plt.xticks(rotation=45)
+plt.legend()
+plt.grid()
+plt.show()
 
 # # Convert to numpy arrays for plotting
 # calculated_rhos = np.array(calculated_rhos)
@@ -335,31 +384,33 @@ for circle in saved_circles:
 # plt.title("Relative Error in Calculated Z Ratio vs True Z Ratio")
 # plt.grid(True)
 # plt.show()
+
 # Plotting
-# plt.figure(figsize=(12, 6))
-# plt.scatter(materials_list, true_mean_excitation,label='True Mean Excitation Energy (I_truth)', color='green', marker='o')
-# plt.scatter(materials_list, calculated_mean_excitation, label='Calculated Mean Excitation Energy (Tanaka)', color='orange', marker='x')
+plt.figure(figsize=(12, 6))
+plt.scatter(materials_list, t_sprs,label='Tanaka SPR', color='green', marker='o')
+plt.scatter(materials_list, sprs, label='Calculated SPR', color='orange', marker='x')
 
-# plt.xlabel('Material')
-# plt.ylabel('Mean Excitation Energy (eV)')
-# plt.title('Comparison of True and Calculated Mean Excitation Energy')
-# plt.xticks(rotation=45, ha='right')
-# plt.legend()
-# plt.grid(True)
-# plt.show()
-
-calculated_mean_excitation = np.array(calculated_mean_excitation)
-true_mean_excitation = np.array(true_mean_excitation)
-i_ratio = (calculated_mean_excitation / true_mean_excitation) - 1
-plt.figure(figsize=(10, 6))
-plt.scatter(true_mean_excitation, i_ratio, color='teal', marker='o')
-
-plt.axhline(0, color='gray', linestyle='--', linewidth=1)  # Reference line at zero
-plt.xlabel("True Mean Excitation")
-plt.ylabel("(calculated_mean_excitation / true_mean_excitation) - 1")
-plt.title("Relative Error in Calculated Mean Excitation vs True Mean Excitation")
+plt.xlabel('Material')
+plt.ylabel('SPR')
+plt.title('Comparison of Tanaka and Calculated SPR')
+plt.xticks(rotation=45, ha='right')
+plt.legend()
 plt.grid(True)
 plt.show()
+
+# calculated_spr = np.array(sprs)
+# tanaka_spr = np.array(t_sprs)
+
+# spr_ratio = (calculated_spr / tanaka_spr) - 1
+# plt.figure(figsize=(10, 6))
+# plt.scatter(tanaka_spr, spr_ratio, color='teal', marker='o')
+
+# plt.axhline(0, color='gray', linestyle='--', linewidth=1)  # Reference line at zero
+# plt.xlabel("Tanaka SPR_ref")
+# plt.ylabel("(calc_spr / tanaka_spr) - 1")
+# plt.title("Relative Error in Calculated SPR vs Tanaka SPR")
+# plt.grid(True)
+# plt.show()
 
 # Print optimized a and b
 for mat, a, b in zip(materials_list, optimized_as, optimized_bs):
