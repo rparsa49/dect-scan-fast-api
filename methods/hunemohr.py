@@ -1,17 +1,28 @@
 import numpy as np
 from pathlib import Path
 import json
+from scipy.optimize import minimize_scalar
+import pydicom
+import cv2
 
 DATA_DIR = Path("data")
-
 
 def load_json(file_name):
     with open(DATA_DIR / file_name, "r") as file:
         return json.load(file)
 
-
 WATER_SPR = load_json("water_sp.json")
+CIRCLE_DATA = load_json("circles.json")
+SAVED_CIRCLES = CIRCLE_DATA["head"]
+MATERIAL_PROPERTIES = load_json("material_properties.json")
+ATOMIC_NUMBERS = load_json("atomic_numbers.json")
+ELEMENTAL_PROPERTIES = load_json("element_properties.json")  
 
+# True electron densities and Zeffs for materials
+TRUE_RHO = {mat: MATERIAL_PROPERTIES[mat]["rho_e_w"]for mat in MATERIAL_PROPERTIES}
+TRUE_ZEFF = {mat: MATERIAL_PROPERTIES[mat]["Z_eff"]for mat in MATERIAL_PROPERTIES}
+
+# Hunemohr Functions
 def rho_e_hunemohr(HU_h, HU_l, c):
     '''
     Hunemohr 2014
@@ -20,6 +31,19 @@ def rho_e_hunemohr(HU_h, HU_l, c):
     c: calibration parameter
     '''
     return c * (HU_h/1000 + 1) + (1 - c) * (HU_l/1000) + 1
+
+def z_eff_hunemohr(n_i, Z_i, n=3.1):
+    '''
+    Hunemohr 2014
+    n_i: List of number densityies for each atom type
+    Z_i: List of atomic numbers for each atom type
+    n: Exponent for effective atomic number
+    '''
+    num = np.sum(n_i * (Z_i ** (n+1)))
+    den = np.sum(n_i * Z_i)
+
+    Z_eff = (num/den) ** (1/n)
+    return Z_eff
 
 def spr_hunemohr(rho, Z, kvp):
     '''
@@ -31,16 +55,89 @@ def spr_hunemohr(rho, Z, kvp):
     b = 3.378 if Z <= 8.5 else 3.376
     return (rho * ((12.77 - (a * Z + b)) / 8.45)) / WATER_SPR.get(str(kvp))
 
+# Fitting Functions
+def optimize_c(HU_H_List, HU_L_List, true_rho_list, materials_list):
+    def objective(c):
+        errors = []
+        for HU_H, HU_L, mat in zip(HU_H_List, HU_L_List, materials_list):
+            if mat in true_rho_list:
+               true_rho = true_rho_list[mat]
+               estimated_rho = rho_e_hunemohr(HU_H, HU_L, c)
+               errors.append(abs(estimated_rho - true_rho))
+        return sum(errors)
+    return minimize_scalar(objective, bounds=(0,1), method="bounded").x
 
-def z_eff_hunemohr(n_i, Z_i, n=3.1):
-    '''
-    Hunemohr 2014
-    n_i: List of number densityies for each atom type
-    Z_i: List of atomic numbers for each atom type
-    n: Exponent for effective atomic number
-    '''
-    num = np.sum(n_i * (Z_i ** (n+1)))
-    den = np.sum(n_i * Z_i)
+def optimize_n_hunemohr(material):
+    composition = MATERIAL_PROPERTIES[material]["composition"]
+    # true_zeff = true_zeff_list[material]
+    elements = list(composition.keys())
+    fractions = np.array([composition[el] for el in elements])
+    atomic_numbers = np.array([ATOMIC_NUMBERS[el] for el in elements])
     
-    Z_eff = (num/den) ** (1/n)
-    return Z_eff
+    return z_eff_hunemohr(fractions, atomic_numbers, 3.1)
+
+def hunemohr(high_path, low_path):
+    dicom_data_h = pydicom.dcmread(high_path)
+    dicom_data_l = pydicom.dcmread(low_path)
+    
+    high_image = dicom_data_h.pixel_array
+    low_image = dicom_data_l.pixel_array
+    
+    HU_H_List, HU_L_List, materials_list = [], [], []
+    calculated_rhos, calculated_zeffs = [], []
+    sprs = []
+    c = 0
+    
+    for circle in SAVED_CIRCLES:
+        x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
+        materials_list.append(material)
+        
+        # Mask for circular region
+        mask = np.zeros(high_image.shape, dtype=np.uint8)
+        cv2.circle(mask, (x, y), int(radius), 1, thickness=-1)
+
+        high_pixel_values = high_image[mask == 1]
+        low_pixel_values = low_image[mask == 1]
+
+        mean_high_hu = np.mean(high_pixel_values) * \
+            dicom_data_h.RescaleSlope + dicom_data_h.RescaleIntercept
+        mean_low_hu = np.mean(low_pixel_values) * \
+            dicom_data_l.RescaleSlope + dicom_data_l.RescaleIntercept
+
+     # Create HU lists
+        HU_H_List.append(mean_high_hu)
+        HU_L_List.append(mean_low_hu)
+    
+    # Step 1: Optimize C for rho_e calculation
+    c = optimize_c(HU_H_List, HU_L_List, TRUE_RHO, materials_list)
+    print(f"Optimized C: {c}")
+    
+    print("\n")
+    
+    # Step 2: Calculate rho using c
+    for hu_h, hu_l in zip(HU_H_List, HU_L_List):
+        rho = rho_e_hunemohr(hu_h, hu_l, c)
+        calculated_rhos.append(rho)
+    
+    # Step 3: Calculate zeff
+    for mat in materials_list:
+        calculated_z = optimize_n_hunemohr(mat)
+        calculated_zeffs.append(calculated_z)
+    
+    # Step 4: Stopping power
+    for rho, z in zip(calculated_rhos, calculated_zeffs):
+        spr = spr_hunemohr(rho, z, dicom_data_l.KVP)
+        sprs.append(spr)
+    
+    for mat, rho in zip(materials_list, calculated_rhos):
+        print(f"Material: {mat} with electron density of {rho}")
+        
+    print("\n")
+    
+    for mat, z in zip(materials_list, calculated_zeffs):
+        print(f"Material: {mat} with Z of {z}")
+    
+    print("\n")
+    
+    for mat, spr in zip(materials_list, sprs):
+        print(f"Material: {mat} with SPR of {spr}")  
