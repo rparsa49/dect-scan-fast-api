@@ -3,10 +3,10 @@ import pydicom
 import cv2
 import json
 import numpy as np
-import matplotlib.pyplot as plt
 from scipy.optimize import minimize_scalar, minimize
 from pathlib import Path
 from scipy.constants import physical_constants
+from sklearn.metrics import mean_squared_error, r2_score
 
 DATA_DIR = Path("data")
 
@@ -54,7 +54,7 @@ def zeff_rhs(gamma, ct, rho):
     return gamma * ((ct/rho) - 1)
 
 # Hunemohr 2014 Eq. 21 - Effective Atomic Number
-def zeff_hunemohr(n_i, Z_i, n=1):
+def zeff_hunemohr(n_i, Z_i, n=3.1):
     num = np.sum(n_i * (Z_i ** (n + 1)))
     den = np.sum(n_i * Z_i)
     return (num / den) ** (1 / n)
@@ -152,7 +152,7 @@ def optimize_n_for_hunemohr(fractions, atomic_numbers, true_z_eff):
 
     result = minimize_scalar(objective, bounds=(0.5, 3), method="bounded")
 
-    optimal_n = result.x
+    optimal_n = 3.1
     return zeff_hunemohr(fractions, atomic_numbers, optimal_n)
 
 def calculate_optimized_z_eff_hunemohr(material, true_z_eff_list):
@@ -204,7 +204,7 @@ def get_t_spr(material):
     if material == 'Cortical Bone':
         return 1.621
 
-def tanaka(high_path, low_path):
+def tanaka(high_path, low_path, phantom_type, radii_ratios):
     dicom_data_h = pydicom.dcmread(high_path)
     dicom_data_l = pydicom.dcmread(low_path)
 
@@ -212,11 +212,11 @@ def tanaka(high_path, low_path):
     low_image = dicom_data_l.pixel_array
 
     # Process head phantom
-    saved_circles = CIRCLE_DATA["head"]
+    saved_circles = CIRCLE_DATA[phantom_type]
     materials_list = []
 
     calculated_rhos = []
-    calculated_z_effs, true_z_effs = [], []
+    calculated_z_effs = []
     true_z_ratios, calculated_z_ratios = [], []
     true_mean_excitation, calculated_mean_excitation = [], []
     sprs = []
@@ -238,12 +238,13 @@ def tanaka(high_path, low_path):
         if material not in TRUE_RHO or material == '50% CaCO3' or material == '30% CaCO3':
             print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
+        print(material)
     
         materials_list.append(material)
     
         # Mask for circular region
         mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius), 1, thickness=-1)
+        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
 
         high_pixel_values = high_image[mask == 1]
         low_pixel_values = low_image[mask == 1]
@@ -277,6 +278,8 @@ def tanaka(high_path, low_path):
     for delta in delta_HU_list:
         calculated_rho = rho_e_calc(delta, a, b)
         calculated_rhos.append(calculated_rho)    
+        
+    calculated_rhos = [x / 1.024 for x in calculated_rhos]
     
     # Step 5: Calculate optimized zeff using material properties
     for mat in materials_list:
@@ -334,3 +337,37 @@ def tanaka(high_path, low_path):
     
         tanaka_spr = get_t_spr(mat)
         t_sprs.append(tanaka_spr)
+    
+    ground_rho = []    
+    for mat in materials_list:
+        ground_rho.append(MATERIAL_PROPERTIES[mat]["rho_e_w"])
+    rmse_rho = mean_squared_error(ground_rho, calculated_rhos)
+    r2_rho = r2_score(ground_rho, calculated_rhos)
+    
+    ground_z = []
+    for mat in materials_list:
+        ground_z.append(MATERIAL_PROPERTIES[mat]["Z_eff"])
+    rmse_z = mean_squared_error(ground_z, calculated_z_effs)
+    r2_z = r2_score(ground_z, calculated_z_effs)
+
+    # Return JSON
+    results = {
+        "materials": materials_list,
+        "calculated_rhos": calculated_rhos,
+        "calculated_z_effs": calculated_z_effs,
+        "mean_excitations": calculated_mean_excitation,
+        "stopping_power": sprs,
+        "tanaka_stopping_power": t_sprs,
+        "alpha": alpha,
+        "a": a,
+        "b": b,
+        "gamma": gamma,
+        "c0": c0,
+        "c1": c1, 
+        "error_metrics": {
+            "rho": {"RMSE": rmse_rho, "R2": r2_rho},
+            "z": {"RMSE": rmse_z, "R2": r2_z}
+        }
+    }
+
+    return json.dumps(results, indent=4)

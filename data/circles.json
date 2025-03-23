@@ -16,7 +16,7 @@
             "x": 332,
             "y": 254,
             "radius": 15,
-            "material": "Lung"
+            "material": "LN-450"
         },
         {
             "x": 256,
@@ -28,7 +28,7 @@
             "x": 178,
             "y": 256,
             "radius": 14,
-            "material": "Lung"
+            "material": "LN-350"
         },
         {
             "x": 256,
