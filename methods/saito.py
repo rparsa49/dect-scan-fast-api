@@ -109,18 +109,18 @@ def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
     alphas = np.linspace(0, 1, 10000)  # Fine granularity
 
     for alpha in alphas:
-        estimated_rhos = []
         true_rhos = []
+        deltas = []
 
         for HU_H, HU_L, material in zip(HU_H_LIST, HU_L_LIST, materials_list):
             if material in true_rho_list:
                 # delta_HU = ((1 + alpha) * HU_H) - (alpha * HU_L)
-                estimated_rho = rho_e(delta_HU(alpha, HU_H, HU_L))
-                estimated_rhos.append(estimated_rho)  # acts as x
+                delta = delta_HU(alpha, HU_H, HU_L)
+                deltas.append(delta / 1000)  # acts as x
                 true_rhos.append(true_rho_list[material])  # acts as y
 
-        # Linear fit: rho_e_cal = a*(rho_e) + b
-        x = np.array(estimated_rhos).reshape(-1, 1)
+        # Linear fit: rho_e_cal = a * (delta_HU / 1000) + b
+        x = np.array(deltas).reshape(-1, 1)
         y = np.array(true_rhos)
         model = LinearRegression().fit(x, y)
         y_pred = model.predict(x)
@@ -145,20 +145,6 @@ def optimize_gamma(zeff_list, ct_list, rho_list):
 
     result = minimize_scalar(objective, bounds=(0, 10), method="bounded")
     return result.x
-
-# def optimize_a_b(delta_HU_List, true_rho_list, material_list):
-#     def objective(params):
-#         a, b = params
-#         errors = []
-#         for delta_HU, material in zip(delta_HU_List, material_list):
-#             if material in true_rho_list:
-#                 true_rho = true_rho_list[material]
-#                 errors.append(abs(rho_e_saito(delta_HU, a, b) - true_rho))
-#         return sum(errors)
-
-#     initial_guess = [0, 1]
-#     result = minimize(objective, initial_guess, method="Nelder-Mead")
-#     return result.x  # Optimized [a, b]
 
 def saito(high_path, low_path, phantom_type, radii_ratios):
     dicom_data_h = pydicom.dcmread(high_path)
@@ -197,7 +183,10 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
         # Create HU lists
         HU_H_List.append(mean_high_hu)
         HU_L_List.append(mean_low_hu)
-    
+        
+    print(f"High HU List: {HU_H_List}\n")
+    print(f"Low HU List: {HU_L_List}\n")
+
     # Step 1: Optimize alpha, a, b for delta HU        
     alpha, a, b, r = optimize_alpha(HU_H_List, HU_L_List, TRUE_RHO, materials_list)
     print(f"Alpha: {alpha}\n a: {a}\n b: {b}\n r: {r}\n")
@@ -226,7 +215,7 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     calculated_zeffs = [(np.abs(zeff_rhs(gamma, ct, rho)) ** (1/3.3) * 7.45)for ct, rho in zip(reduced_ct, calculated_rhos)]
 
     for mat, z in zip(materials_list, calculated_zeffs):
-        print(f"{mat}'s calculated Z: {z}")
+        print(f"Material: {mat}'s calculated Z: {z}")
     
     # Step 6: Calculate Mean Excitation Energy
     for mat in materials_list:
@@ -263,6 +252,8 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     r2_z = r2_score(ground_z, calculated_zeffs)
     print(f"RMSE for Z: {rmse_z}")
     
+    print(f"R2 for lin reg {r}\n\n")
+    
     # Return JSON
     results = {
         "materials": materials_list,
@@ -279,5 +270,7 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
             "z": {"RMSE": rmse_z, "R2": r2_z}
         }
     }     
+    
+    # return results
     
     return json.dumps(results, indent=4)

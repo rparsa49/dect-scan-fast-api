@@ -12,6 +12,7 @@ from dect_processing.dect import (save_dicom_as_png, process_and_save_circles)
 from dect_processing.organize import convert_numpy
 import shutil 
 import tensorflow as tf
+import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
@@ -29,6 +30,8 @@ app.add_middleware(
 
 IMAGES_DIR = "processed_images"
 DICOM_DIR = "uploaded_dicoms"
+BASE_DICOM_HIGH = "processed_images/test-data/high/"
+BASE_DICOM_LOW = "processed_images/test-data/low/"
 
 Path(IMAGES_DIR).mkdir(exist_ok=True)
 
@@ -156,73 +159,108 @@ async def update_circles(request: Request):
         "updated_low_kvp_images": updated_low_images
     })
 
+def convert_to_dicom_path(image_url, is_high=True):
+    filename = os.path.basename(image_url).replace(".png", ".dcm")
+    base_path = BASE_DICOM_HIGH if is_high else BASE_DICOM_LOW
+    return os.path.join(base_path, filename)
+
+def preprocess_image(dicom_path):
+    dicom_data = pydicom.dcmread(dicom_path)
+    image = dicom_data.pixel_array.astype(np.float32)
+    image = (image - np.min(image)) / \
+        (np.max(image) - np.min(image))  # normalize 0-1
+    image = cv2.resize(image, (128, 128))  # resize to model input
+    image = image.flatten()
+    image = np.expand_dims(image, axis=0)
+    return image
+
+def save_clean_as_png(image, save_path):
+    plt.imsave(save_path, image, cmap="gray")
+
+
+def denoise_and_save(image_url, is_high=True):
+    dicom_path = convert_to_dicom_path(image_url, is_high)
+    dcm = pydicom.dcmread(dicom_path)
+    original_image = dcm.pixel_array.astype(np.float32)
+
+    normalized = (original_image - np.min(original_image)) / \
+        (np.max(original_image) - np.min(original_image))
+    resized = cv2.resize(normalized, (128, 128), interpolation=cv2.INTER_AREA)
+
+    noise_factor = 0.2
+    noisy_input = resized + noise_factor * \
+        np.random.normal(loc=0.0, scale=1.0, size=resized.shape)
+    noisy_input = np.clip(noisy_input, 0., 1.)
+
+    input_tensor = noisy_input.reshape(1, -1).astype(np.float32)
+
+    model = tf.keras.models.load_model("dense.h5")
+    denoised = model.predict(input_tensor)
+    denoised = np.squeeze(denoised).reshape(128, 128)
+
+    # === Resize to match original shape ===
+    original_shape = original_image.shape
+    denoised_resized = cv2.resize(
+        denoised, original_shape[::-1], interpolation=cv2.INTER_CUBIC)
+
+
+    # === Replace original DICOM pixel data with denoised version ===
+    slope = float(dcm.get("RescaleSlope", 1))
+    intercept = float(dcm.get("RescaleIntercept", 0))
+
+    denoised_scaled = (denoised_resized * (np.max(original_image) -
+                   np.min(original_image))) + np.min(original_image)
+    denoised_scaled = denoised_scaled * slope + intercept
+
+    #Overwrite the original .dcm file (or change to save to new path if preferred)
+    dcm.save_as(dicom_path) 
+    
+    name = os.path.basename(dicom_path).replace(".dcm", ".png")
+    save_path = os.path.join(IMAGES_DIR, name)
+    save_clean_as_png(denoised_resized, save_path)
+
+    return f"/get-image/{name}"
+
 @app.post("/clean-noise")
 async def clean_noise(request: Request):
     data = await request.json()
-    # load the images
-    high_path = data.get("high_kvp_image")
-    low_path = data.get("low_kvp_image")
-    # load model
-    model = tf.keras.models.load_model("my_model.h5")
-    
-    # high image
-    dicom_data = pydicom.dcmread(high_path)
-    image = dicom_data.pixel_array.astype(np.float32)
-    image = (image - np.min(image)) / (np.max(image) - np.min(image))
-    image = np.expand_dims(image, axis=-1)
-    image = np.expand_dims(image, axis = 0)
-    denoised_image_high = model.predict(image)
-    denoised_image_high = np.squeeze(denoised_image_high)
-    
-    # saving images and returning
-    original_name = os.path.basename(high_path).replace(".dcm", ".png")
-    high_img_path = os.path.join(IMAGES_DIR, original_name, "clean")
-    save_dicom_as_png(denoised_image_low, high_img_path)
-    new_high = (f"/get-image/{original_name}")
 
+    high_image_url = data.get("high_kvp_image")
+    low_image_url = data.get("low_kvp_image")
 
-    # low image
-    dicom_data = pydicom.dcmread(low_path)
-    image = dicom_data.pixel_array.astype(np.float32)
-    image = (image - np.min(image)) / (np.max(image) - np.min(image))
-    image = np.expand_dims(image, axis=-1)
-    image = np.expand_dims(image, axis=0)
-    denoised_image_low = model.predict(image)
-    denoised_image_low = np.squeeze(denoised_image_low)
-    
-    # saving images and returning
-    original_name = os.path.basename(low_path).replace(".dcm", ".png")
-    low_img_path = os.path.join(IMAGES_DIR, original_name, "clean")
-    save_dicom_as_png(denoised_image_low, low_img_path)
-    new_low = (f"/get-image/{original_name}")
+    if not high_image_url or not low_image_url:
+        return {"error": "Missing image paths"}
+
+    new_high = denoise_and_save(high_image_url, is_high=True)
+    new_low = denoise_and_save(low_image_url, is_high=False)
     
     return {
         "high": new_high,
         "low": new_low
     }
-
     
+
 @app.post("/analyze-inserts")
 async def analyze_inserts(request: Request):
     data = await request.json()
     radii_ratios = data.get("radius", [1.0])
-    radii_ratios = int(radii_ratios) / 100 
-    phantom_type = data.get("phantom") 
+    radii_ratios = int(radii_ratios) / 100
+    phantom_type = data.get("phantom")
     method_type = data.get("model")
     high_path = data.get("high_kvp_image")
     low_path = data.get("low_kvp_image")
-    
+
     logging.info(f"High path is: {high_path}")
     logging.info(f"Low path is: {low_path}")
-    
-    high_name = high_path.split("/get-image/")[-1]
-    high_name = os.path.basename(high_name).replace(".png", ".dcm")
+
+    # Strip cache-busting parameters like ?t=123456
+    high_name = os.path.basename(
+        high_path.split("?")[0]).replace(".png", ".dcm")
+    low_name = os.path.basename(low_path.split("?")[0]).replace(".png", ".dcm")
+
     high_name = os.path.join(IMAGES_DIR, "test-data", "high", high_name)
-    
-    low_name = low_path.split("/get-image/")[-1]
-    low_name = os.path.basename(low_name).replace(".png", ".dcm")
     low_name = os.path.join(IMAGES_DIR, "test-data", "low", low_name)
-    
+
     if method_type == "Saito":
         results = saito(high_name, low_name, phantom_type, radii_ratios)
         results = json.loads(results)
@@ -254,3 +292,17 @@ async def go_back(request: Request):
                 return {"error": f"Failed to delete {file_path}: {str(e)}"}
 
     return {"message": "Processed images directory cleaned successfully"}
+
+@app.post("/reset-processed")
+async def reset_processed_folder():
+    try:
+        for filename in os.listdir(IMAGES_DIR):
+            file_path = os.path.join(IMAGES_DIR, filename)
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        return {"message": "✅ Processed images folder cleared successfully."}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error clearing folder: {str(e)}")

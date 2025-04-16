@@ -7,6 +7,7 @@ from scipy.optimize import minimize_scalar, minimize
 from pathlib import Path
 from scipy.constants import physical_constants
 from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression
 
 DATA_DIR = Path("data")
 
@@ -97,32 +98,53 @@ def spr_tanaka(rho, I, beta):
 
 # Optimize alpha to match true electron density using Saito 2017a eq. 1 and eq. 2
 def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
-    def objective(alpha):
-        errors = []
+    best_r2 = 0
+    best_alpha = None
+    best_a = None
+    best_b = None
+
+    alphas = np.linspace(0, 1, 10000)  # Fine granularity
+
+    for alpha in alphas:
+        true_rhos = []
+        deltas = []
+
         for HU_H, HU_L, material in zip(HU_H_LIST, HU_L_LIST, materials_list):
             if material in true_rho_list:
-                true_rho = true_rho_list[material]
-                estimated_rho = rho_e(delta_HU(alpha, HU_H, HU_L))
-                errors.append(abs(estimated_rho - true_rho))
-        return sum(errors)
+                # delta_HU = ((1 + alpha) * HU_H) - (alpha * HU_L)
+                delta = delta_HU(alpha, HU_H, HU_L)
+                deltas.append(delta / 1000)  # acts as x
+                true_rhos.append(true_rho_list[material])  # acts as y
 
-    result = minimize_scalar(objective, bounds=(0, 1), method="bounded")
-    return result.x  # Optimal alpha
+        # Linear fit: rho_e_cal = a * (delta_HU / 1000) + b
+        x = np.array(deltas).reshape(-1, 1)
+        y = np.array(true_rhos)
+        model = LinearRegression().fit(x, y)
+        y_pred = model.predict(x)
+        r2 = r2_score(y, y_pred)
+
+        if r2 > best_r2:
+            best_r2 = r2
+            best_alpha = alpha
+            best_a = model.coef_[0]
+            best_b = model.intercept_
+
+    return best_alpha, best_a, best_b, best_r2
 
 # Optimize a and b to match true electron density using Saito 2012 eq. 4
-def optimize_a_b(delta_HU_List, true_rho_list, material_list):
-    def objective(params):
-        a, b = params
-        errors = []
-        for delta_HU, material in zip(delta_HU_List, material_list):
-            if material in true_rho_list:
-                true_rho = true_rho_list[material]
-                errors.append(abs(rho_e_calc(delta_HU, a, b) - true_rho))
-        return sum(errors)
+# def optimize_a_b(delta_HU_List, true_rho_list, material_list):
+#     def objective(params):
+#         a, b = params
+#         errors = []
+#         for delta_HU, material in zip(delta_HU_List, material_list):
+#             if material in true_rho_list:
+#                 true_rho = true_rho_list[material]
+#                 errors.append(abs(rho_e_calc(delta_HU, a, b) - true_rho))
+#         return sum(errors)
 
-    initial_guess = [1, 1]
-    result = minimize(objective, initial_guess, method="Nelder-Mead")
-    return result.x  # Optimized [a, b]
+#     initial_guess = [1, 1]
+#     result = minimize(objective, initial_guess, method="Nelder-Mead")
+#     return result.x  # Optimized [a, b]
 
 # Calculate Z_eff using Hunemohr 2014 eq. 21
 def calculate_z_eff_hunemohr(material):
@@ -259,34 +281,28 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         HU_L_List.append(mean_low_hu)
     
     # Step 1: Get optimized alpha
-    alpha = optimize_alpha(HU_H_List, HU_L_List, TRUE_RHO, materials_list)
-    print(f"Alpha is: {alpha}")
-
-    # Step 2: Use optimal alpha to calculate delta_HU
-    for HU_H, HU_L in zip(HU_H_List, HU_H_List):
-        delta = delta_HU(alpha, HU_H, HU_L)
-        delta_HU_list.append(delta)
-
-        print(f"Delta HUs: {delta_HU_list}")
-
-    # Step 3: Optimize a and b
-    a, b = optimize_a_b(delta_HU_list, TRUE_RHO, materials_list)
-    print(f"a: {a}")
-    print(f"b: {b}")
-
-    # Step 4: Calculate rho_e using optimized a and b
-    for delta in delta_HU_list:
-        calculated_rho = rho_e_calc(delta, a, b)
-        calculated_rhos.append(calculated_rho)    
-        
-    calculated_rhos = [x / 1.024 for x in calculated_rhos]
+    alpha, a, b, r = optimize_alpha(HU_H_List, HU_L_List, TRUE_RHO, materials_list)
+    print(f"Alpha: {alpha}\n a: {a}\n b: {b}\n r: {r}\n")
     
-    # Step 5: Calculate optimized zeff using material properties
+    deltas = []
+    for HU_H, HU_L in zip(HU_H_List, HU_L_List):
+        delta = ((1 + alpha) * HU_H) - (alpha * HU_L)
+        deltas.append(delta)
+
+    # Step 2: Calculate rho
+    for delta in deltas:
+        rho = rho_e_calc(delta, a, b)
+        calculated_rhos.append(rho)
+
+    for mat, rho in zip(materials_list, calculated_rhos):
+        print(f"Material: {mat} with electron density of {rho}")
+    
+    # Step 3: Calculate optimized zeff using material properties
     for mat in materials_list:
         calculated_z_eff = calculate_optimized_z_eff_hunemohr(mat, TRUE_ZEFF)
         calculated_z_effs.append(calculated_z_eff)
 
-    # Step 6: Optimize gamma for Z_eff_w ratio
+    # Step 4: Optimize gamma for Z_eff_w ratio
     for HU_L in HU_L_List:
         ct = reduce_ct(HU_L)
         reduced_cts.append(ct)
@@ -303,7 +319,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         z_ratio = zeff_rhs(gamma, ct, rho)
         calculated_z_ratios.append(z_ratio)
     
-    # Step 7: Calculate True Mean Excitation Energy
+    # Step 5: Calculate True Mean Excitation Energy
     for mat in materials_list:
         comp = MATERIAL_PROPERTIES[mat]["composition"]
         elements = list(comp.keys())
@@ -318,7 +334,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
 
     print(f"True I: {true_mean_excitation}")
 
-    # Step 8: Optimize c0 and c1 for mean excitation energy using Tanaka 2020 eq. 6
+    # Step 6: Optimize c0 and c1 for mean excitation energy using Tanaka 2020 eq. 6
     c0, c1 = optimize_c(true_mean_excitation, calculated_z_ratios)
 
     print(f"C0: {c0} \nC1: {c1}")
@@ -328,7 +344,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         calculated_mean_excitation.append(i_tanaka_val)
 
     print(f"Tanaka I: {calculated_mean_excitation}")
-    # Step 9: Calculate stopping power
+    # Step 7: Calculate stopping power
     for t, rho, mat in zip(calculated_mean_excitation, calculated_rhos, materials_list):
         I = get_I(t)
         beta2 = beta(dicom_data_l.KVP)
@@ -361,6 +377,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         "alpha": alpha,
         "a": a,
         "b": b,
+        "r": r,
         "gamma": gamma,
         "c0": c0,
         "c1": c1, 
