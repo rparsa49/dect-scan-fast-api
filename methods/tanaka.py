@@ -52,6 +52,8 @@ def zeff_lhs(zeff):
 
 # Saito 2017a Eq. 8 - RHS
 def zeff_rhs(gamma, ct, rho):
+    v = gamma * ((ct/rho) - 1)
+    print(v)
     return gamma * ((ct/rho) - 1)
 
 # Hunemohr 2014 Eq. 21 - Effective Atomic Number
@@ -131,21 +133,6 @@ def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
 
     return best_alpha, best_a, best_b, best_r2
 
-# Optimize a and b to match true electron density using Saito 2012 eq. 4
-# def optimize_a_b(delta_HU_List, true_rho_list, material_list):
-#     def objective(params):
-#         a, b = params
-#         errors = []
-#         for delta_HU, material in zip(delta_HU_List, material_list):
-#             if material in true_rho_list:
-#                 true_rho = true_rho_list[material]
-#                 errors.append(abs(rho_e_calc(delta_HU, a, b) - true_rho))
-#         return sum(errors)
-
-#     initial_guess = [1, 1]
-#     result = minimize(objective, initial_guess, method="Nelder-Mead")
-#     return result.x  # Optimized [a, b]
-
 # Calculate Z_eff using Hunemohr 2014 eq. 21
 def calculate_z_eff_hunemohr(material):
     composition = MATERIAL_PROPERTIES[material]["composition"]
@@ -163,7 +150,7 @@ def calculate_optimized_gamma(ct_list, rho_list, z_eff_list):
         errors = [(zeff_lhs(z) - zeff_rhs(gamma, ct, rho)) ** 2 for ct, rho, z in zip(ct_list, rho_list, z_eff_list)]
         return sum(errors)
     
-    result = minimize_scalar(objective, bounds=(0,20), method="bounded")
+    result = minimize_scalar(objective, bounds=(0, 15), method="bounded")
     return result.x
 
 # Minimize the difference between calculated and true Z_eff
@@ -174,7 +161,7 @@ def optimize_n_for_hunemohr(fractions, atomic_numbers, true_z_eff):
 
     result = minimize_scalar(objective, bounds=(0.5, 3), method="bounded")
 
-    optimal_n = 3.1
+    optimal_n = 3
     return zeff_hunemohr(fractions, atomic_numbers, optimal_n)
 
 def calculate_optimized_z_eff_hunemohr(material, true_z_eff_list):
@@ -225,6 +212,18 @@ def get_t_spr(material):
         return 1.427
     if material == 'Cortical Bone':
         return 1.621
+
+def optimize_gamma(zeff_list, ct_list, rho_list):
+    def objective(gamma):
+        errors = []
+        for zeff, ct, rho in zip(zeff_list, ct_list, rho_list):
+            lhs = zeff_lhs(zeff)
+            rhs = zeff_rhs(gamma, ct, rho)
+            errors.append(abs(lhs - rhs))
+        return sum(errors)
+
+    result = minimize_scalar(objective, bounds=(0, 10), method="bounded")
+    return result.x
 
 def tanaka(high_path, low_path, phantom_type, radii_ratios):
     dicom_data_h = pydicom.dcmread(high_path)
@@ -297,28 +296,20 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     for mat, rho in zip(materials_list, calculated_rhos):
         print(f"Material: {mat} with electron density of {rho}")
     
-    # Step 3: Calculate optimized zeff using material properties
-    for mat in materials_list:
-        calculated_z_eff = calculate_optimized_z_eff_hunemohr(mat, TRUE_ZEFF)
-        calculated_z_effs.append(calculated_z_eff)
-
-    # Step 4: Optimize gamma for Z_eff_w ratio
-    for HU_L in HU_L_List:
-        ct = reduce_ct(HU_L)
-        reduced_cts.append(ct)
-
-    true_z_ratios = []
-    for zeff in calculated_z_effs:
-        tzr = zeff_lhs(zeff)
-        true_z_ratios.append(tzr)
-    gamma = calculate_optimized_gamma(reduced_cts, calculated_rhos, calculated_z_effs)
-
-    print(f"Gamma: {gamma}")
-
-    for ct, rho in zip(reduced_cts, calculated_rhos):   
-        z_ratio = zeff_rhs(gamma, ct, rho)
-        calculated_z_ratios.append(z_ratio)
+    # Step 3: Calculate reduced CT
+    reduced_ct = [reduce_ct(hl) for hl in HU_L_List]
     
+    # Step 4: Optimize Gamma using true Z_Eff and estimated rho
+    zeff_list = [TRUE_ZEFF[mat] for mat in materials_list]
+    gamma = optimize_gamma(zeff_list, reduced_ct, calculated_rhos)
+    print(f"Gamma is: {gamma}")
+    
+    # Step 5: Calculate estimated Z ratios
+    calculated_z_ratios = [(zeff_rhs(gamma, ct, rho)) for ct, rho in zip(reduced_ct, calculated_rhos)]
+
+    # Convert ratios to Z_eff
+    calculated_z_effs = [(np.abs(zeff_rhs(gamma, ct, rho)) ** (1/3.3) * 7.45)for ct, rho in zip(reduced_ct, calculated_rhos)]
+
     # Step 5: Calculate True Mean Excitation Energy
     for mat in materials_list:
         comp = MATERIAL_PROPERTIES[mat]["composition"]
@@ -333,6 +324,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         true_mean_excitation.append(i)
 
     print(f"True I: {true_mean_excitation}")
+    print(f"Calculated Zs: {calculated_z_ratios}")
 
     # Step 6: Optimize c0 and c1 for mean excitation energy using Tanaka 2020 eq. 6
     c0, c1 = optimize_c(true_mean_excitation, calculated_z_ratios)
