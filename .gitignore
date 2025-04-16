@@ -2,3 +2,4 @@ processed_images/
 *.pyc
 __pycache__/
 myenv/
+debugging/
