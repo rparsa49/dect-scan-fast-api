@@ -5,6 +5,7 @@ from scipy.optimize import minimize_scalar
 import pydicom
 import cv2
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percentage_error
+from scipy.constants import physical_constants
 
 DATA_DIR = Path("data")
 
@@ -22,8 +23,6 @@ ELEMENTAL_PROPERTIES = load_json("element_properties.json")
 TRUE_RHO = {mat: MATERIAL_PROPERTIES[mat]["rho_e_w"]for mat in MATERIAL_PROPERTIES}
 TRUE_ZEFF = {mat: MATERIAL_PROPERTIES[mat]["Z_eff"]for mat in MATERIAL_PROPERTIES}
 
-RHO_W = 3.342801000466205e+23
-
 # Hunemohr Functions
 def rho_e_hunemohr(HU_h, HU_l, c):
     '''
@@ -39,15 +38,45 @@ def z_eff_hunemohr(n_i, Z_i, n=3.1):
     den = np.sum(n_i * Z_i)
     return (num / den) ** (1 / n)
 
-def spr_hunemohr(rho, Z, kvp):
+# def spr_hunemohr(rho, Z, kvp):
+#     '''
+#     Hunemohr 2014
+#     rho: Electron density ratio of the material to water
+#     Z: Effective atomic number
+#     '''
+#     a = 0.125 if Z <= 8.5 else 0.098
+#     b = 3.378 if Z <= 8.5 else 3.376
+#     return (rho * ((12.77 - (a * Z + b)) / 8.45)) / WATER_SPR.get(str(kvp))
+
+def beta(kvp):
+    kinetic_energy_mev = kvp / 1000
+    proton_mass_mev = physical_constants['proton mass energy equivalent in MeV'][0]
+    gamma = (proton_mass_mev + kinetic_energy_mev) / proton_mass_mev
+    return np.sqrt(1 - (1 / gamma ** 2))
+
+# Get I_material from ln I / Iw
+def get_I(mean_exciation):
+    return 75 * (np.e ** mean_exciation)
+
+def spr_bethe(rho, I, beta):
     '''
-    Hunemohr 2014
-    rho: Electron density ratio of the material to water
-    Z: Effective atomic number
+    rho: electron density ratio to water
+    I, Iw: Mean excitation energies of the material and water
+    me: rest electron mass
+    c: speed of light in a vacuum
+    beta: speed of the projectile proton relative to that of light
     '''
-    a = 0.125 if Z <= 8.5 else 0.098
-    b = 3.378 if Z <= 8.5 else 3.376
-    return (rho * ((12.77 - (a * Z + b)) / 8.45)) / WATER_SPR.get(str(kvp))
+    me = 9.10938356e-31
+    c = 2.99792458e8
+    Iw = 75
+    
+    term1 = (np.log(2*me * (c ** 2) * beta)) / (I - beta) - beta
+    term2 = (np.log(2*me * (c ** 2) * beta)) / (Iw - beta) - beta
+    return rho * (term1/term2)
+
+# True Mean Excitation Energy (Courtesy of Milo V.)
+def i_truth(weight_fractions, Num, A, I):
+    return sum(weight_fractions * Num / A * np.log(I)) / sum(weight_fractions * Num / A)
 
 # Fitting Functions
 def optimize_c(HU_H_List, HU_L_List, true_rho_list, materials_list):
@@ -80,6 +109,7 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
     HU_H_List, HU_L_List, materials_list = [], [], []
     calculated_rhos, calculated_zeffs = [], []
     sprs = []
+    mean_excitations = []
     c = 0
     SAVED_CIRCLES = CIRCLE_DATA[phantom_type]
 
@@ -123,10 +153,32 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
         calculated_z = calculate_zeff_hunemohr(mat)
         calculated_zeffs.append(calculated_z)
     
+    # Step 6: Calculate Mean Excitation Energy
+    for mat in materials_list:
+        comp = MATERIAL_PROPERTIES[mat]["composition"]
+        elements = list(comp.keys())
+        fraction = np.array([comp[e] for e in elements])
+
+        atomic_numbers = np.array(
+            [ELEMENTAL_PROPERTIES[e]["number"] for e in elements])
+        atomic_masses = np.array(
+            [ELEMENTAL_PROPERTIES[e]["mass"] for e in elements])
+        ionization_energies = np.array(
+            [ELEMENTAL_PROPERTIES[e]["ionization"] for e in elements])
+
+        i = i_truth(fraction, atomic_numbers,
+                    atomic_masses, ionization_energies)
+        mean_excitations.append(i)
+        
     # Step 4: Stopping power
-    for rho, z in zip(calculated_rhos, calculated_zeffs):
-        spr = spr_hunemohr(rho, z, dicom_data_l.KVP)
+    for i, rho, mat in zip(mean_excitations, calculated_rhos, materials_list):
+        I = get_I(i)
+        beta2 = beta(dicom_data_l.KVP)
+        spr = spr_bethe(rho, I, beta2)
         sprs.append(spr)
+    # for rho, z in zip(calculated_rhos, calculated_zeffs):
+    #     spr = spr_hunemohr(rho, z, dicom_data_h.KVP)
+    #     sprs.append(spr)
     
     for mat, rho in zip(materials_list, calculated_rhos):
         print(f"Material: {mat} with electron density of {rho}")
