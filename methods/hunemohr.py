@@ -6,6 +6,7 @@ import pydicom
 import cv2
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_percentage_error
 from scipy.constants import physical_constants
+from scipy.optimize import curve_fit
 
 DATA_DIR = Path("data")
 
@@ -48,11 +49,11 @@ def z_eff_hunemohr(n_i, Z_i, n=3.1):
 #     b = 3.378 if Z <= 8.5 else 3.376
 #     return (rho * ((12.77 - (a * Z + b)) / 8.45)) / WATER_SPR.get(str(kvp))
 
-def beta(kvp):
+def beta(kvp=200):
     kinetic_energy_mev = kvp / 1000
     proton_mass_mev = physical_constants['proton mass energy equivalent in MeV'][0]
     gamma = (proton_mass_mev + kinetic_energy_mev) / proton_mass_mev
-    return np.sqrt(1 - (1 / gamma ** 2))
+    return np.sqrt(1 - (1 / gamma ** 2)) ** 2
 
 # Get I_material from ln I / Iw
 def get_I(mean_exciation):
@@ -90,6 +91,9 @@ def optimize_c(HU_H_List, HU_L_List, true_rho_list, materials_list):
         return sum(errors)
     return minimize_scalar(objective, bounds=(0,1), method="bounded").x
 
+'''
+True values of Z_eff to use in fitting
+'''
 def calculate_zeff_hunemohr(material):
     composition = MATERIAL_PROPERTIES[material]["composition"]
 
@@ -98,6 +102,18 @@ def calculate_zeff_hunemohr(material):
     atomic_numbers = np.array([ATOMIC_NUMBERS[el] for el in elements])
     
     return z_eff_hunemohr(fractions, atomic_numbers, 3.1)
+
+'''
+Fitting Z_eff
+'''
+def z_eff_model(xdata, d_e, n=3.1):
+    rho_e, rho_w, zeff_w, x1, x2 = xdata
+    
+    factor = (rho_e / rho_w) ** -1
+    term1 = d_e * ((x1 / 1000) + 1)
+    term2 = (zeff_w ** n -d_e) * ((x2 / 1000) + 1)
+    inner = factor * (term1 + term2)
+    return inner ** (1/n)
 
 def hunemohr(high_path, low_path, phantom_type, radii_ratios):
     dicom_data_h = pydicom.dcmread(high_path)
@@ -148,11 +164,14 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
         rho = rho_e_hunemohr(hu_h, hu_l, c)
         calculated_rhos.append(rho)
     
-    # Step 3: Calculate zeff
+    # Step 3: Calculate true zeff
     for mat in materials_list:
         calculated_z = calculate_zeff_hunemohr(mat)
         calculated_zeffs.append(calculated_z)
     
+    # Step 4: Calculate optimized zeff
+    # TODO: add code to calculate optimized zeff
+        
     # Step 6: Calculate Mean Excitation Energy
     for mat in materials_list:
         comp = MATERIAL_PROPERTIES[mat]["composition"]
@@ -173,7 +192,7 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
     # Step 4: Stopping power
     for i, rho, mat in zip(mean_excitations, calculated_rhos, materials_list):
         I = get_I(i)
-        beta2 = beta(dicom_data_l.KVP)
+        beta2 = beta()
         spr = spr_bethe(rho, I, beta2)
         sprs.append(spr)
     # for rho, z in zip(calculated_rhos, calculated_zeffs):
