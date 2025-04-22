@@ -106,10 +106,26 @@ def calculate_zeff_hunemohr(material):
 '''
 Fitting Z_eff
 '''
-def z_eff_model(xdata, d_e, n=3.1):
-    rho_e, rho_w, zeff_w, x1, x2 = xdata
-    
-    factor = (rho_e / rho_w) ** -1
+def z_eff_model(X, d_e, n=3.1):
+    rho_e, zeff_w, x1, x2 = X.T
+    factor = (rho_e) ** -1
+    term1 = d_e * ((x1 / 1000) + 1)
+    term2 = (zeff_w ** n -d_e) * ((x2 / 1000) + 1)
+    inner = factor * (term1 + term2)
+    return inner ** (1/n)
+
+def fit_zeff(rho_e, zeff_w, true_zeff, x1, x2):
+    rho_e = np.asarray(rho_e)
+    x1 = np.asarray(x1)
+    x2 = np.asarray(x2)
+    zeff_w_arr = np.full_like(rho_e, zeff_w)
+
+    X = np.column_stack((rho_e, zeff_w_arr, x1, x2))
+    popt, _ = curve_fit(lambda X, d_e: z_eff_model(X, d_e), X, true_zeff)
+    return popt[0]
+
+def calculate_zeff_optimized(rho_e, zeff_w, x1, x2, d_e, n=3.1):
+    factor = (rho_e) ** -1
     term1 = d_e * ((x1 / 1000) + 1)
     term2 = (zeff_w ** n -d_e) * ((x2 / 1000) + 1)
     inner = factor * (term1 + term2)
@@ -124,6 +140,7 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
     
     HU_H_List, HU_L_List, materials_list = [], [], []
     calculated_rhos, calculated_zeffs = [], []
+    optimized_zs = []
     sprs = []
     mean_excitations = []
     c = 0
@@ -170,8 +187,13 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
         calculated_zeffs.append(calculated_z)
     
     # Step 4: Calculate optimized zeff
-    # TODO: add code to calculate optimized zeff
-        
+    zeff_w = calculate_zeff_hunemohr("True Water")
+    # zeff_w = 7
+    d_e = fit_zeff(calculated_rhos, zeff_w, calculated_zeffs, HU_H_List, HU_L_List)
+    for rhos, x1, x2 in zip(calculated_rhos, HU_H_List, HU_L_List):
+        opt_z = calculate_zeff_optimized(rhos, zeff_w, x1,  x2, d_e)
+        optimized_zs.append(opt_z)
+    
     # Step 6: Calculate Mean Excitation Energy
     for mat in materials_list:
         comp = MATERIAL_PROPERTIES[mat]["composition"]
@@ -204,7 +226,7 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
         
     print("\n")
     
-    for mat, z in zip(materials_list, calculated_zeffs):
+    for mat, z in zip(materials_list, optimized_zs):
         print(f"Material: {mat} with Z of {z}")
     
     print("\n")
@@ -222,15 +244,15 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
     ground_z = []
     for mat in materials_list:
         ground_z.append(MATERIAL_PROPERTIES[mat]["Z_eff"])    
-    rmse_z = mean_squared_error(ground_z, calculated_zeffs)
-    r2_z = r2_score(ground_z, calculated_zeffs)
-    percent_z = mean_absolute_percentage_error(ground_z, calculated_zeffs)
+    rmse_z = mean_squared_error(ground_z, optimized_zs)
+    r2_z = r2_score(ground_z, optimized_zs)
+    percent_z = mean_absolute_percentage_error(ground_z, optimized_zs)
 
     # Return JSON
     results = {
         "materials": materials_list,
         "calculated_rhos": calculated_rhos,
-        "calculated_z_effs": calculated_zeffs,
+        "calculated_z_effs": optimized_zs,
         "stopping_power": sprs,
         "error_metrics": {
             "rho": {"RMSE": rmse_rho, "R2": r2_rho, "PercentError": percent_rho},
