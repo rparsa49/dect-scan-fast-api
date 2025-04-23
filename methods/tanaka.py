@@ -8,6 +8,7 @@ from pathlib import Path
 from scipy.constants import physical_constants
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression
+from scipy.optimize import curve_fit
 
 DATA_DIR = Path("data")
 
@@ -144,6 +145,33 @@ def calculate_z_eff_hunemohr(material):
     z_eff = zeff_hunemohr(fractions, atomic_numbers)
     return z_eff
 
+def z_eff_model(X, d_e, n=3.1):
+    rho_e, zeff_w, x1, x2 = X.T
+    factor = (rho_e) ** -1
+    term1 = d_e * ((x1 / 1000) + 1)
+    term2 = (zeff_w ** n - d_e) * ((x2 / 1000) + 1)
+    inner = factor * (term1 + term2)
+    return inner ** (1/n)
+
+
+def fit_zeff(rho_e, zeff_w, true_zeff, x1, x2):
+    rho_e = np.asarray(rho_e)
+    x1 = np.asarray(x1)
+    x2 = np.asarray(x2)
+    zeff_w_arr = np.full_like(rho_e, zeff_w)
+
+    X = np.column_stack((rho_e, zeff_w_arr, x1, x2))
+    popt, _ = curve_fit(lambda X, d_e: z_eff_model(X, d_e), X, true_zeff)
+    return popt[0]
+
+
+def calculate_zeff_optimized(rho_e, zeff_w, x1, x2, d_e, n=3.1):
+    factor = (rho_e) ** -1
+    term1 = d_e * ((x1 / 1000) + 1)
+    term2 = (zeff_w ** n - d_e) * ((x2 / 1000) + 1)
+    inner = factor * (term1 + term2)
+    return inner ** (1/n)
+
 # Optimize gamma to match true effective atomic number using Saito 2017a eq. 8
 def calculate_optimized_gamma(ct_list, rho_list, z_eff_list):
     def objective(gamma):
@@ -239,6 +267,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     calculated_rhos = []
     calculated_z_effs = []
     true_z_ratios, calculated_z_ratios = [], []
+    optimized_zs = []
     true_mean_excitation, calculated_mean_excitation = [], []
     sprs = []
     t_sprs = []
@@ -310,6 +339,16 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     # Convert ratios to Z_eff
     calculated_z_effs = [(np.abs(zeff_rhs(gamma, ct, rho)) ** (1/3.3) * 7.45)for ct, rho in zip(reduced_ct, calculated_rhos)]
 
+    # Calculate optimized Z_eff
+    # Step 4: Calculate optimized zeff
+    zeff_w = calculate_z_eff_hunemohr("True Water")
+    # zeff_w = 7
+    d_e = fit_zeff(calculated_rhos, zeff_w,
+                   calculated_z_effs, HU_H_List, HU_L_List)
+    for rhos, x1, x2 in zip(calculated_rhos, HU_H_List, HU_L_List):
+        opt_z = calculate_zeff_optimized(rhos, zeff_w, x1,  x2, d_e)
+        optimized_zs.append(opt_z)
+    
     # Step 5: Calculate True Mean Excitation Energy
     for mat in materials_list:
         comp = MATERIAL_PROPERTIES[mat]["composition"]
@@ -339,7 +378,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     # Step 7: Calculate stopping power
     for t, rho, mat in zip(calculated_mean_excitation, calculated_rhos, materials_list):
         I = get_I(t)
-        beta2 = beta(dicom_data_l.KVP)
+        beta2 = beta(200)
         spr = spr_tanaka(rho, I, beta2)
         sprs.append(spr) 
     
@@ -355,14 +394,14 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     ground_z = []
     for mat in materials_list:
         ground_z.append(MATERIAL_PROPERTIES[mat]["Z_eff"])
-    rmse_z = mean_squared_error(ground_z, calculated_z_effs)
-    r2_z = r2_score(ground_z, calculated_z_effs)
+    rmse_z = mean_squared_error(ground_z, optimized_zs)
+    r2_z = r2_score(ground_z, optimized_zs)
 
     # Return JSON
     results = {
         "materials": materials_list,
         "calculated_rhos": calculated_rhos,
-        "calculated_z_effs": calculated_z_effs,
+        "calculated_z_effs": optimized_zs,
         "mean_excitations": calculated_mean_excitation,
         "stopping_power": sprs,
         "tanaka_stopping_power": t_sprs,

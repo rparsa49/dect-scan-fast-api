@@ -233,7 +233,7 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     # Step 7: Calculate SPR
     for i, rho, mat in zip(mean_excitations, calculated_rhos, materials_list):
         I = get_I(i)
-        beta2 = beta(dicom_data_l.KVP)
+        beta2 = beta(200)
         spr = spr_tanaka(rho, I, beta2)
         sprs.append(spr)
         
