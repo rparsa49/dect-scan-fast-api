@@ -205,16 +205,21 @@ def calculate_optimized_z_eff_hunemohr(material, true_z_eff_list):
 
 # Optimize c0 and c1 to match the true mean excitation energies
 def optimize_c(ionization_list, z_ratio_list):
-    def objective(params):
-        c0, c1 = params
-        for i, z in zip(ionization_list, z_ratio_list):
-            calc_i_list = [i_tanaka(z, c0, c1)]
-            vals = [(calc_i - i) ** 2 for calc_i in calc_i_list]
-            return sum(vals)
+    z_ratio_array = np.array(z_ratio_list)
+    ionization_array = np.array(ionization_list)
+    
+    popt, _ = curve_fit(i_tanaka, z_ratio_array, ionization_array, p0=[100,50])
+    return popt
+    # def objective(params):
+    #     c0, c1 = params
+    #     for i, z in zip(ionization_list, z_ratio_list):
+    #         calc_i_list = [i_tanaka(z, c0, c1)]
+    #         vals = [(calc_i - i) ** 2 for calc_i in calc_i_list]
+    #         return sum(vals)
        
-    initial_guess = [100, 50]
-    result = minimize(objective, initial_guess, method = 'Nelder-Mead')
-    return result.x
+    # initial_guess = [100, 50]
+    # result = minimize(objective, initial_guess, method = 'Nelder-Mead')
+    # return result.x
 
 # Get SPR from Tanaka
 def get_t_spr(material):
