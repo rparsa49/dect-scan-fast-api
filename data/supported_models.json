@@ -1,10 +1,5 @@
 {
-  "Saito": {
-    "name": "Saito",
-    "description": "Saito's model for calculating stopping power"
-  },
-  "Hunemohr": {
-    "name": "Hunemohr",
-    "description": "Hunemohr's model for calculating stopping power"
-  }
+    "Hunemohr": "",
+    "Saito": "",
+    "Tanaka": ""
 }

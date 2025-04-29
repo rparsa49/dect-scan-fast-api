@@ -1,27 +1,23 @@
-import shutil, math, os, json, cv2, logging, pydicom, numpy as np
+import math, os, json, cv2, logging, pydicom, numpy as np
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
-from methods.saito import (
-    alpha_saito, hu_saito, rho_e_calibrated_saito, rho_e_saito, mew_saito, z_eff_saito
-)
-from methods.hunemohr import rho_e_hunemohr, z_eff_hunemohr, spr_hunemohr
-from methods.spr import sp_truth
-from methods.true_attenuation import linear_attenuation
-from methods.ln_mean_excitation_potential import ln_mean_excitation_potential
-from dect_processing.dect import (
-    load_dicom_image,
-    categorize_hu_value, save_dicom_as_png, process_and_save_circles, find_dicom_files
-)
+from methods.saito import saito
+from methods.hunemohr import hunemohr
+from methods.tanaka import tanaka
+from dect_processing.dect import (save_dicom_as_png, process_and_save_circles)
 from dect_processing.organize import convert_numpy
+import shutil 
+import tensorflow as tf
+import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO)
 app = FastAPI()
 
-app.mount("/processed_images",
+app.mount("/processed_i`mages",
           StaticFiles(directory="processed_images"), name="processed_images")
 
 app.add_middleware(
@@ -34,8 +30,12 @@ app.add_middleware(
 
 IMAGES_DIR = "processed_images"
 DICOM_DIR = "uploaded_dicoms"
+BASE_DICOM_HIGH = "processed_images/test-data/high/"
+BASE_DICOM_LOW = "processed_images/test-data/low/"
 
 Path(IMAGES_DIR).mkdir(exist_ok=True)
+
+UPLOADED_DIR = ""
 
 # Load JSON data files
 DATA_DIR = Path("data")
@@ -44,16 +44,26 @@ def load_json(file_name):
     with open(DATA_DIR / file_name, "r") as file:
         return json.load(file)
 
-SUPPORTED_MODELS = load_json("supported_models.json")
 HU_CATEGORIES = load_json("hu_categories.json")
 ELEMENT_PROPERTIES = load_json("element_properties.json")
 MATERIAL_PROPERTIES = load_json("material_properties.json")
 CIRCLE_DATA = load_json("circles.json")
 WATER_ATTENUATION = load_json("water_att.json")
 ELEMENT_ATOMIC_NUMBERS = load_json("atomic_numbers.json")
+
 '''
 API CALLS
 '''
+@app.get("/get-supported-models")
+async def get_supported_models():
+    models = {
+        "tanaka": {"name": "Tanaka"},
+        "saito": {"name": "Saito"},
+        "hunemohr": {"name": "Hunemohr"}
+    }
+    return JSONResponse(models)
+
+
 @app.post("/upload-scan")
 async def upload_scan(files: List[UploadFile] = File(...)):
     dicom_files = []
@@ -64,12 +74,13 @@ async def upload_scan(files: List[UploadFile] = File(...)):
             f.write(await file.read())
         dicom_files.append(file_path)
 
-    # Separate files by high and low kVp
     high_kvp_files = []
     low_kvp_files = []
     slice_thickness = None
     ref_dcm = pydicom.dcmread(dicom_files[0])
     ref_kvp = ref_dcm.get("KVP")
+
+    logging.info(f"Reference KVP is {ref_kvp}")
 
     for dicom_file in dicom_files:
         dicom_data = pydicom.dcmread(dicom_file)
@@ -77,32 +88,33 @@ async def upload_scan(files: List[UploadFile] = File(...)):
 
         if slice_thickness is None:
             slice_thickness = dicom_data.get("SliceThickness")
-        
+
         if kvp >= ref_kvp:
             high_kvp_files.append(dicom_file)
         else:
             low_kvp_files.append(dicom_file)
 
-    # Convert DICOM files to PNG and store paths
     high_kvp_image_paths = []
     low_kvp_image_paths = []
 
-    for i, high_file in enumerate(high_kvp_files):
-        high_img_path = os.path.join(IMAGES_DIR, f"high_kvp_{i+1}.png")
+    for high_file in high_kvp_files:
+        original_name = os.path.basename(high_file).replace(".dcm", ".png")
+        high_img_path = os.path.join(IMAGES_DIR, original_name)
         save_dicom_as_png(high_file, high_img_path)
-        high_kvp_image_paths.append(f"/get-image/high_kvp_{i+1}.png")
+        high_kvp_image_paths.append(f"/get-image/{original_name}")
 
-    for i, low_file in enumerate(low_kvp_files):
-        low_img_path = os.path.join(IMAGES_DIR, f"low_kvp_{i+1}.png")
+    for low_file in low_kvp_files:
+        original_name = os.path.basename(low_file).replace(".dcm", ".png")
+        low_img_path = os.path.join(IMAGES_DIR, original_name)
         save_dicom_as_png(low_file, low_img_path)
-        low_kvp_image_paths.append(f"/get-image/low_kvp_{i+1}.png")
+        low_kvp_image_paths.append(f"/get-image/{original_name}")
 
     return {
         "high_kvp_images": high_kvp_image_paths,
         "low_kvp_images": low_kvp_image_paths,
         "slice_thickness": slice_thickness
     }
-
+    
 # Return image
 @app.get("/get-image/{image_name}")
 async def get_image(image_name: str):
@@ -123,7 +135,6 @@ async def update_circles(request: Request):
     if not phantom_type:
         raise HTTPException(status_code=400, detail="Missing phantom_type.")
 
-    # Get circle locations for the specified phantom type
     if phantom_type not in CIRCLE_DATA:
         raise HTTPException(status_code=400, detail="Invalid phantom type.")
     circles_data = CIRCLE_DATA[phantom_type]
@@ -131,35 +142,103 @@ async def update_circles(request: Request):
     updated_high_images = []
     updated_low_images = []
 
-    # Process high kVp images
     for image_path in high_kvp_images:
-        # Remove the "/get-image/" prefix to get the actual file name
         image_name = image_path.split("/get-image/")[-1]
         input_path = os.path.join(IMAGES_DIR, image_name)
-        output_path = os.path.join(IMAGES_DIR, f"circled_{image_name}")
-        process_and_save_circles(
-            input_path, percentage, circles_data, output_path)
-        updated_high_images.append(f"/get-image/circled_{image_name}")
+        process_and_save_circles(input_path, percentage, circles_data, input_path)
+        updated_high_images.append(f"/get-image/{image_name}")
 
-    # Process low kVp images
     for image_path in low_kvp_images:
-        # Remove the "/get-image/" prefix to get the actual file name
         image_name = image_path.split("/get-image/")[-1]
         input_path = os.path.join(IMAGES_DIR, image_name)
-        output_path = os.path.join(IMAGES_DIR, f"circled_{image_name}")
-        process_and_save_circles(
-            input_path, percentage, circles_data, output_path)
-        updated_low_images.append(f"/get-image/circled_{image_name}")
+        process_and_save_circles(input_path, percentage, circles_data, input_path)
+        updated_low_images.append(f"/get-image/{image_name}")
 
     return JSONResponse({
         "updated_high_kvp_images": updated_high_images,
         "updated_low_kvp_images": updated_low_images
     })
 
-# Return supported models
-@app.get("/get-supported-models")
-async def get_supported_models():
-    return JSONResponse(SUPPORTED_MODELS)
+def convert_to_dicom_path(image_url, is_high=True):
+    filename = os.path.basename(image_url).replace(".png", ".dcm")
+    base_path = BASE_DICOM_HIGH if is_high else BASE_DICOM_LOW
+    return os.path.join(base_path, filename)
+
+def preprocess_image(dicom_path):
+    dicom_data = pydicom.dcmread(dicom_path)
+    image = dicom_data.pixel_array.astype(np.float32)
+    image = (image - np.min(image)) / \
+        (np.max(image) - np.min(image))  # normalize 0-1
+    image = cv2.resize(image, (128, 128))  # resize to model input
+    image = image.flatten()
+    image = np.expand_dims(image, axis=0)
+    return image
+
+def save_clean_as_png(image, save_path):
+    plt.imsave(save_path, image, cmap="gray")
+
+
+def denoise_and_save(image_url, is_high=True):
+    dicom_path = convert_to_dicom_path(image_url, is_high)
+    dcm = pydicom.dcmread(dicom_path)
+    original_image = dcm.pixel_array.astype(np.float32)
+
+    normalized = (original_image - np.min(original_image)) / \
+        (np.max(original_image) - np.min(original_image))
+    resized = cv2.resize(normalized, (128, 128), interpolation=cv2.INTER_AREA)
+
+    noise_factor = 0.2
+    noisy_input = resized + noise_factor * \
+        np.random.normal(loc=0.0, scale=1.0, size=resized.shape)
+    noisy_input = np.clip(noisy_input, 0., 1.)
+
+    input_tensor = noisy_input.reshape(1, -1).astype(np.float32)
+
+    model = tf.keras.models.load_model("dense.h5")
+    denoised = model.predict(input_tensor)
+    denoised = np.squeeze(denoised).reshape(128, 128)
+
+    # === Resize to match original shape ===
+    original_shape = original_image.shape
+    denoised_resized = cv2.resize(
+        denoised, original_shape[::-1], interpolation=cv2.INTER_CUBIC)
+
+
+    # === Replace original DICOM pixel data with denoised version ===
+    slope = float(dcm.get("RescaleSlope", 1))
+    intercept = float(dcm.get("RescaleIntercept", 0))
+
+    denoised_scaled = (denoised_resized * (np.max(original_image) -
+                   np.min(original_image))) + np.min(original_image)
+    denoised_scaled = denoised_scaled * slope + intercept
+
+    #Overwrite the original .dcm file (or change to save to new path if preferred)
+    dcm.save_as(dicom_path) 
+    
+    name = os.path.basename(dicom_path).replace(".dcm", ".png")
+    save_path = os.path.join(IMAGES_DIR, name)
+    save_clean_as_png(denoised_resized, save_path)
+
+    return f"/get-image/{name}"
+
+@app.post("/clean-noise")
+async def clean_noise(request: Request):
+    data = await request.json()
+
+    high_image_url = data.get("high_kvp_image")
+    low_image_url = data.get("low_kvp_image")
+
+    if not high_image_url or not low_image_url:
+        return {"error": "Missing image paths"}
+
+    new_high = denoise_and_save(high_image_url, is_high=True)
+    new_low = denoise_and_save(low_image_url, is_high=False)
+    
+    return {
+        "high": new_high,
+        "low": new_low
+    }
+    
 
 @app.post("/analyze-inserts")
 async def analyze_inserts(request: Request):
@@ -167,253 +246,63 @@ async def analyze_inserts(request: Request):
     radii_ratios = data.get("radius", [1.0])
     radii_ratios = int(radii_ratios) / 100
     phantom_type = data.get("phantom")
-    saved_circles = CIRCLE_DATA[phantom_type]
-    # Assume that we pass in the method type
     method_type = data.get("model")
+    high_path = data.get("high_kvp_image")
+    low_path = data.get("low_kvp_image")
 
-    # dicom_file_path = find_first_dicom_file()
-    high_path, low_path = find_dicom_files()
-    
-    if not high_path or not low_path:
-        raise HTTPException(
-            status_code=404, detail="No DICOM files found in the directory structure")
-    
-    # Load the DICOM image and convert pixel values to HU values
-    high_image, dicom_datah = load_dicom_image(high_path)
-    low_image, dicom_datal = load_dicom_image(low_path)
+    logging.info(f"High path is: {high_path}")
+    logging.info(f"Low path is: {low_path}")
 
-    high_hu = []
-    low_hu = []
-    for circle in saved_circles:
-        x, y, radius = circle["x"], circle["y"], circle["radius"]
-        mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
-        high_pixel_values = high_image[mask == 1]
-        low_pixel_values = low_image[mask == 1]
+    # Strip cache-busting parameters like ?t=123456
+    high_name = os.path.basename(
+        high_path.split("?")[0]).replace(".png", ".dcm")
+    low_name = os.path.basename(low_path.split("?")[0]).replace(".png", ".dcm")
 
-        high_hu.append(np.mean(high_pixel_values))
-        low_hu.append(np.mean(low_pixel_values))
-    
-    mean_hu_values = high_hu
-    
-    # mean_hu_values = []
-    # for a, b in zip(high_hu, low_hu):
-    #     mean_hu_values.append((a+b)/2)
+    high_name = os.path.join(IMAGES_DIR, "test-data", "high", high_name)
+    low_name = os.path.join(IMAGES_DIR, "test-data", "low", low_name)
 
-    results = []
-    # From here, everything should be done in a switch-case
-    if method_type == 'Saito':
-        iter = 0
-        for i, hu in enumerate(mean_hu_values):
-            # Calculate uncalibrated electron density
-            rho_e = rho_e_saito(hu)
-        
-            # Use Saito's methods to compute linear attenuation coefficients
-            mu_l = mew_saito(low_hu)
-            mu_h = mew_saito(high_hu)
-            for i in range(len(mu_h)):
-                mu_h[i] += 1
-
-            # Get the attenuation coefficient of water at the energy spectra
-            water_mu_h = WATER_ATTENUATION.get(str(dicom_datah.KVP))
-            water_mu_l = WATER_ATTENUATION.get(str(dicom_datal.KVP))
-
-            # Calculate alpha
-            alpha = alpha_saito(mu_l, mu_h, water_mu_l, water_mu_h, rho_e)
-            
-            # Calibrated rho calculation
-            beta = float(data.get("beta"))
-            rho_e_cal = rho_e_calibrated_saito(hu, alpha[iter], beta)
-            
-            # Effective atomic number calculation
-            lam = 10.98
-            z_eff = z_eff_saito(mu_h, lam, rho_e_cal)
-        
-            # Categorize materials based on HU
-            material = categorize_hu_value(hu)
-            
-            # Calculate stopping power
-            spr = None
-            if material in MATERIAL_PROPERTIES:
-                material_info = MATERIAL_PROPERTIES[material]
-                a = sum(
-                    fraction * ELEMENT_PROPERTIES[element]["mass"]
-                    for element, fraction in material_info["composition"].items()
-                )
-                ln_i_m = ln_mean_excitation_potential(z_eff)
-                
-                # Calculate beta2 (velocity / speed of sound)
-                velocity = 299792458 * math.sqrt(1 - ((0.511 / (dicom_datah.KVP + 0.511)) ** 2))
-                beta2 = velocity / 299792458
-                
-                spr = sp_truth(z_eff, a, ln_i_m, beta2, dicom_datah.KVP)
-            
-            # Append results
-            results.append({
-            "material": material,
-            "rho_e": rho_e,
-            "z_eff": z_eff,
-            "stopping_power": spr,
-            "alpha": alpha[iter],
-            "beta": beta,
-            "lambda": lam
-        })
-            iter += 1
-    elif method_type == 'Hunemohr':
-        c = float(data.get('beta'))
-        for i, (hu_h, hu_l) in enumerate(zip(high_hu, low_hu)):
-            # Ensure HU values are scalars
-            hu_h = float(hu_h)  # Convert NumPy type to Python float
-            hu_l = float(hu_l)
-
-            # Compute electron density using Hunemohr equation
-            rho_e = rho_e_hunemohr(hu_h, hu_l, c)
-            
-            # Identify material from HU
-            material = categorize_hu_value(hu_h)
-            logging.info(f"Material Identified: {material}")
-            # Compute Z_eff using Hunemohr's method
-            if material in MATERIAL_PROPERTIES:
-                material_info = MATERIAL_PROPERTIES[material]
-                n_i = np.array(list(material_info["composition"].values()))
-                Z_i = np.array([ELEMENT_ATOMIC_NUMBERS[element] for element in material_info["composition"]])
-
-                Z_eff = z_eff_hunemohr(n_i, Z_i)
-                logging.info(f"Effective atomic number for {material} is {Z_eff}")
-                # Compute stopping power ratio
-                spr = spr_hunemohr(rho_e, Z_eff, dicom_datah.KVP)
-                logging.info(f"Stopping power for {material} is {spr}")
-            else:
-                logging.info("No material found")
-                Z_eff, spr = None, None
-            
-            results.append({
-                "material": material,
-                "rho_e": rho_e,
-                "z_eff": Z_eff,
-                "stopping_power": spr
-            })
-            
-    return JSONResponse({"results": [{k: convert_numpy(v) for k, v in res.items()} for res in results]})
-
-# Test calibration
-@app.post("/test-calibration")
-async def test_calibration(
-    alpha: str = Form(...),
-    beta: str = Form(...),
-    lambda_val: str = Form(...),
-    method: str = Form(...),
-    files: List[UploadFile] = File(...)
-):
-    # Create test upload directory
-    test_folder = os.path.join(IMAGES_DIR, "test_calibration")
-    os.makedirs(test_folder, exist_ok=True)
-
-    # Save uploaded files
-    for file in files:
-        file_path = os.path.join(test_folder, file.filename)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-    # **Parse JSON strings into lists of floats**
-    try:
-        # Convert string to a list by splitting on commas and stripping spaces
-        alpha_list = [float(a.strip()) for a in alpha.split(",")]
-        beta_list = [float(b.strip()) for b in beta.split(",")]
-        lambda_list = [float(l.strip()) for l in lambda_val.split(",")]
-    except (json.JSONDecodeError, ValueError) as e:
-        raise HTTPException(
-            status_code=400, detail=f"Invalid JSON format: {str(e)}")
-
-    # Run calibration test logging using parsed parameters
-    new_results = perform_test_calibration(
-        test_folder, alpha_list, beta_list, lambda_list, method)
-
-    return {"new_table": new_results}
-
-
-def perform_test_calibration(folder_path, alpha, beta, lambda_val, method):
-    """
-    Perform test calibration using the given method, calibration parameters, and DICOM scan.
-    """
-    high_path, low_path = find_dicom_files(folder_path)
-
-    if not high_path or not low_path:
-        raise HTTPException(
-            status_code=404, detail="No DICOM files found in the directory structure.")
-
-    # Load DICOM images and convert pixel values to HU values
-    high_image, dicom_datah = load_dicom_image(high_path)
-    low_image, dicom_datal = load_dicom_image(low_path)
-
-    # Extract mean HU values from defined circular regions
-    saved_circles = CIRCLE_DATA.get("head")  # Adjust based on phantom type
-    radii_ratios = 1.0  # Assume default ratio for testing
-
-    high_hu, low_hu = [], []
-    for circle in saved_circles:
-        x, y, radius = circle["x"], circle["y"], circle["radius"]
-        mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
-        high_pixel_values = high_image[mask == 1]
-        low_pixel_values = low_image[mask == 1]
-
-        high_hu.append(np.mean(high_pixel_values))
-        low_hu.append(np.mean(low_pixel_values))
-
-    mean_hu_values = high_hu  # Assuming using high kVp HU for material classification
-
-    results = []
-
-    # Determine calculation method
-    if method == "Saito":
-        iter = 0
-        for i, hu in enumerate(mean_hu_values):
-            rho_e = rho_e_saito(hu)
-            mu_h = mew_saito(high_hu[i]) + 1  # Offset by 1 for correction
-
-            # Calculate calibrated rho_e
-            rho_e_cal = rho_e_calibrated_saito(hu, alpha[iter], beta[iter])
-
-            # Calculate z_eff
-            z_eff = z_eff_saito(mu_h, lambda_val[iter], rho_e_cal)
-
-            # Identify material
-            material = categorize_hu_value(hu)
-
-            # Calculate stopping power ratio
-            spr = None
-            if material in MATERIAL_PROPERTIES:
-                material_info = MATERIAL_PROPERTIES[material]
-                a = sum(
-                    fraction * ELEMENT_PROPERTIES[element]["mass"]
-                    for element, fraction in material_info["composition"].items()
-                )
-                ln_i_m = ln_mean_excitation_potential(z_eff)
-
-                velocity = 299792458 * \
-                    math.sqrt(1 - ((0.511 / (dicom_datah.KVP + 0.511)) ** 2))
-                beta2 = velocity / 299792458
-
-                spr = sp_truth(z_eff, a, ln_i_m, beta2, dicom_datah.KVP)
-
-            # Store results
-            results.append({
-                "material": material,
-                "rho_e": rho_e,
-                "z_eff": z_eff,
-                "stopping_power": spr,
-                "alpha": alpha[iter],
-                "beta": beta[iter],
-                "lambda": lambda_val[iter]
-            })
-            iter += 1
-    elif method == "BVM":
-        # Placeholder for BVM calculations
-        logging.info("BVM method selected but not implemented.")
-
+    if method_type == "Saito":
+        results = saito(high_name, low_name, phantom_type, radii_ratios)
+        results = json.loads(results)
+    elif method_type == "Hunemohr":
+        results = hunemohr(high_name, low_name, phantom_type, radii_ratios)
+        results = json.loads(results)
+    elif method_type == "Tanaka":
+        results = tanaka(high_name, low_name, phantom_type, radii_ratios)
+        results = json.loads(results)
     else:
-        raise HTTPException(
-            status_code=400, detail=f"Method {method} not supported.")
+        return JSONResponse({"error": "Invalid method type"}, status_code=400)
 
-    return [{"material": res["material"], "rho_e": res["rho_e"], "z_eff": res["z_eff"], "stopping_power": res["stopping_power"]} for res in results]
+    return JSONResponse({"results": {k: convert_numpy(v) for k, v in results.items()}})
+
+
+@app.post("/go-back")
+async def go_back(request: Request):
+    # Check if directory exists
+    if os.path.exists(IMAGES_DIR) and os.path.isdir(IMAGES_DIR):
+        # Remove all files and subdirectories inside the directory
+        for filename in os.listdir(IMAGES_DIR):
+            file_path = os.path.join(IMAGES_DIR, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)  # Remove files and symbolic links
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)  # Remove subdirectories
+            except Exception as e:
+                return {"error": f"Failed to delete {file_path}: {str(e)}"}
+
+    return {"message": "Processed images directory cleaned successfully"}
+
+@app.post("/reset-processed")
+async def reset_processed_folder():
+    try:
+        for filename in os.listdir(IMAGES_DIR):
+            file_path = os.path.join(IMAGES_DIR, filename)
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        return {"message": "✅ Processed images folder cleared successfully."}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error clearing folder: {str(e)}")
