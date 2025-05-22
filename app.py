@@ -30,8 +30,8 @@ app.add_middleware(
 
 IMAGES_DIR = "processed_images"
 DICOM_DIR = "uploaded_dicoms"
-BASE_DICOM_HIGH = "processed_images/test-data/high/"
-BASE_DICOM_LOW = "processed_images/test-data/low/"
+BASE_DICOM_HIGH = ""
+BASE_DICOM_LOW = ""
 
 Path(IMAGES_DIR).mkdir(exist_ok=True)
 
@@ -63,6 +63,28 @@ async def get_supported_models():
     }
     return JSONResponse(models)
 
+# Given a folder with two subfolders containing DICOM files, determine which one is the high KVP folder
+def identify_high_low_dirs(main_folder):
+    subdirs = [os.path.join(main_folder, d) for d in os.listdir(main_folder) if os.path.isdir(os.path.join(main_folder, d))]
+    
+    if len(subdirs) != 2:
+        raise ValueError("Upload must contain exactly two subfolders with DICOMs.")
+    
+    kvps = []
+    st = []
+    for subdir in subdirs:
+        dcm_files = [f for f in os.listdir(subdir) if f.lower().endswith(".dcm")]
+        if not dcm_files:
+            raise ValueError(f"No DICOM files found in {subdir}")
+        dcm = pydicom.dcmread(os.path.join(subdir, dcm_files[0]))
+        kvp = dcm.get("KVP")
+        st.append(dcm.get("SliceThickness"))
+        if kvp is None:
+            raise ValueError(f"No KVP in file {dcm_files[0]}")
+        kvps.append((kvp, subdir))
+    
+    kvps.sort(reverse=True)
+    return kvps[0][1], kvps[1][1], st[0]
 
 @app.post("/upload-scan")
 async def upload_scan(files: List[UploadFile] = File(...)):
@@ -74,25 +96,25 @@ async def upload_scan(files: List[UploadFile] = File(...)):
             f.write(await file.read())
         dicom_files.append(file_path)
 
-    high_kvp_files = []
-    low_kvp_files = []
-    slice_thickness = None
-    ref_dcm = pydicom.dcmread(dicom_files[0])
-    ref_kvp = ref_dcm.get("KVP")
-
-    logging.info(f"Reference KVP is {ref_kvp}")
-
-    for dicom_file in dicom_files:
-        dicom_data = pydicom.dcmread(dicom_file)
-        kvp = dicom_data.get("KVP")
-
-        if slice_thickness is None:
-            slice_thickness = dicom_data.get("SliceThickness")
-
-        if kvp >= ref_kvp:
-            high_kvp_files.append(dicom_file)
-        else:
-            low_kvp_files.append(dicom_file)
+    # Identify session folder
+    root_paths = set(Path(f).parents[1] for f in dicom_files)
+    if len(root_paths) != 1:
+        raise HTTPException(status_code=400, detail="All files must be inside a single root folder.")
+    session_folder = str(next(iter(root_paths)))
+    
+    try:
+        high_path, low_path, st = identify_high_low_dirs(session_folder)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    global BASE_DICOM_HIGH, BASE_DICOM_LOW, SLICE_THICKNESS, ROOT_PATH
+    BASE_DICOM_HIGH = high_path
+    BASE_DICOM_LOW = low_path
+    SLICE_THICKNESS = st
+    ROOT_PATH = session_folder
+    
+    high_kvp_files = [str(p) for p in Path(high_path).glob("*dcm")]
+    low_kvp_files = [str(p) for p in Path(low_path).glob("*dcm")]
 
     high_kvp_image_paths = []
     low_kvp_image_paths = []
@@ -112,7 +134,7 @@ async def upload_scan(files: List[UploadFile] = File(...)):
     return {
         "high_kvp_images": high_kvp_image_paths,
         "low_kvp_images": low_kvp_image_paths,
-        "slice_thickness": slice_thickness
+        "slice_thickness": SLICE_THICKNESS
     }
     
 # Return image
@@ -161,8 +183,22 @@ async def update_circles(request: Request):
 
 def convert_to_dicom_path(image_url, is_high=True):
     filename = os.path.basename(image_url).replace(".png", ".dcm")
-    base_path = BASE_DICOM_HIGH if is_high else BASE_DICOM_LOW
-    return os.path.join(base_path, filename)
+    base_subfolder = BASE_DICOM_HIGH if is_high else BASE_DICOM_LOW
+
+    if not base_subfolder or not ROOT_PATH:
+        raise RuntimeError("BASE_DICOM paths or ROOT_PATH not set")
+
+    # Get only the final subfolder name, e.g., "SubfolderA"
+    subfolder_name = os.path.basename(base_subfolder)
+
+    # Now construct: processed_images/<main folder>/<subfolder>/<filename>
+    full_path = os.path.join(ROOT_PATH, subfolder_name, filename)
+
+    if not os.path.exists(full_path):
+        raise FileNotFoundError(
+            f"[convert_to_dicom_path] Missing: {full_path}")
+
+    return full_path
 
 def preprocess_image(dicom_path):
     dicom_data = pydicom.dcmread(dicom_path)
@@ -254,12 +290,12 @@ async def analyze_inserts(request: Request):
     logging.info(f"Low path is: {low_path}")
 
     # Strip cache-busting parameters like ?t=123456
-    high_name = os.path.basename(
-        high_path.split("?")[0]).replace(".png", ".dcm")
-    low_name = os.path.basename(low_path.split("?")[0]).replace(".png", ".dcm")
+    # high_name = os.path.basename(
+    #     high_path.split("?")[0]).replace(".png", ".dcm")
+    # low_name = os.path.basename(low_path.split("?")[0]).replace(".png", ".dcm")
 
-    high_name = os.path.join(IMAGES_DIR, "test-data", "high", high_name)
-    low_name = os.path.join(IMAGES_DIR, "test-data", "low", low_name)
+    high_name = convert_to_dicom_path(high_path, is_high=True)
+    low_name = convert_to_dicom_path(low_path, is_high=False)
 
     if method_type == "Saito":
         results = saito(high_name, low_name, phantom_type, radii_ratios)
