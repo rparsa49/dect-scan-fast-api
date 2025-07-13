@@ -68,5 +68,21 @@
         "number": 22,
         "mass": 47.867,
         "ionization": 233
+    },
+    "S": {
+        "number": 16,
+        "mass": 32.066
+    },
+    "K": {
+        "number": 19,
+        "mass": 39.098
+    },
+    "Fe": {
+        "number": 26,
+        "mass": 55.845
+    },
+    "I": {
+        "number": 53,
+        "mass": 126.904
     }
 }

@@ -1,0 +1,590 @@
+{
+    "Adipose Tissue": {
+        "composition": {
+            "H": 11.4,
+            "C": 59.8,
+            "N": 0.7,
+            "O": 27.8,
+            "Na": 0.1,
+            "S": 0.1,
+            "Cl": 0.1
+        },
+        "density": 0.95,
+        "H": 930,
+        "Electron density": 0.951,
+        "SPR": 0.979
+    },
+    "Blood": {
+        "composition": {
+            "H": 10.2,
+            "C": 11.0,
+            "N": 3.3,
+            "O": 74.5,
+            "P": 0.1,
+            "Na": 0.1,
+            "S": 0.2,
+            "Cl": 0.3,
+            "K": 0.2,
+            "Fe": 0.1
+        },
+        "density": 1.06,
+        "H": 1055,
+        "Electron density": 1.050,
+        "SPR": 1.053
+    },
+    "Brain": {
+        "composition": {
+            "H": 10.7,
+            "C": 14.5,
+            "N": 2.2,
+            "O": 71.2,
+            "P": 0.4,
+            "Na": 0.2,
+            "S": 0.2,
+            "Cl": 0.3,
+            "K": 0.3
+        },
+        "density": 1.04,
+        "H": 1037,
+        "Electron density": 1.035,
+        "SPR": 1.040
+    },
+    "Breast": {
+        "composition": {
+            "H": 10.6,
+            "C": 33.2,
+            "N": 3.0,
+            "O": 52.7,
+            "P": 0.1,
+            "Na": 0.1,
+            "S": 0.2,
+            "Cl": 0.1
+        },
+        "density": 1.02,
+        "H": 1003,
+        "Electron density": 1.014,
+        "SPR": 1.029
+    },
+    "Cell Nucleus": {
+        "composition": {
+            "H": 10.6,
+            "C": 9.0,
+            "N": 3.2,
+            "O": 74.2,
+            "P": 2.6
+        },
+        "density": 1.00,
+        "H": 1003,
+        "Electron density": 0.994,
+        "SPR": 0.996
+    },
+    "Eye Lens": {
+        "composition": {
+            "H": 9.6,
+            "C": 19.5,
+            "N": 5.7,
+            "O": 64.6,
+            "P": 0.1,
+            "Na": 0.1,
+            "S": 0.3,
+            "Cl": 0.1
+        },
+        "density": 1.07,
+        "H": 1050,
+        "Electron density": 1.055,
+        "SPR": 1.060
+    },
+    "GI Tract": {
+        "composition": {
+            "H": 10.6,
+            "C": 11.5,
+            "N": 2.2,
+            "O": 75.1,
+            "P": 0.1,
+            "Na": 0.1,
+            "S": 0.1,
+            "Cl": 0.2,
+            "K": 0.1
+        },
+        "density": 1.03,
+        "H": 1023,
+        "Electron density": 1.024,
+        "SPR": 1.028
+    },
+    "Heart": {
+        "composition": {
+            "H": 10.3,
+            "C": 12.1,
+            "N": 3.2,
+            "O": 73.4,
+            "P": 0.1,
+            "Na": 0.1,
+            "S": 0.2,
+            "Cl": 0.3,
+            "K": 0.2,
+            "Fe": 0.1
+        },
+        "density": 1.06,
+        "H": 1055,
+        "Electron density": 1.051,
+        "SPR": 1.054
+    },
+    "Kidney": {
+        "composition": {
+            "H": 10.3,
+            "C": 13.2,
+            "N": 3.0,
+            "O": 72.4,
+            "Ca": 0.1,
+            "P": 0.2,
+            "Na": 0.2,
+            "S": 0.2,
+            "Cl": 0.2,
+            "K": 0.2
+        },
+        "density": 1.05,
+        "H": 1043,
+        "Electron density": 1.041,
+        "SPR": 1.045
+    },
+    "Liver": {
+        "composition": {
+            "H": 10.2,
+            "C": 13.9,
+            "N": 3.0,
+            "O": 71.6,
+            "P": 0.3,
+            "Na": 0.2,
+            "S": 0.3,
+            "Cl": 0.2,
+            "K": 0.3
+        },
+        "density": 1.06,
+        "H": 1053,
+        "Electron density": 1.050,
+        "SPR": 1.054
+    },
+    "Lung (Deflated)": {
+        "composition": {
+            "H": 10.3,
+            "C": 10.5,
+            "N": 3.1,
+            "O": 74.9,
+            "P": 0.2,
+            "Na": 0.2,
+            "S": 0.3,
+            "Cl": 0.3,
+            "K": 0.2
+        },
+        "density": 1.05,
+        "H": 1044,
+        "Electron density": 1.041,
+        "SPR": 1.044
+    },
+    "Lymph": {
+        "composition": {
+            "H": 10.8,
+            "C": 4.1,
+            "N": 1.1,
+            "O": 83.2,
+            "Na": 0.3,
+            "S": 0.1,
+            "Cl": 0.4
+        },
+        "density": 1.03,
+        "H": 1028,
+        "Electron density": 1.026,
+        "SPR": 1.027
+    },
+    "Muscle": {
+        "composition": {
+            "H": 10.2,
+            "C": 14.3,
+            "N": 3.4,
+            "O": 71.0,
+            "P": 0.2,
+            "Na": 0.1,
+            "S": 0.3,
+            "Cl": 0.1,
+            "K": 0.4
+        },
+        "density": 1.05,
+        "H": 1042,
+        "Electron density": 1.040,
+        "SPR": 1.044
+    },
+    "Ovary": {
+        "composition": {
+            "H": 10.5,
+            "C": 9.3,
+            "N": 2.4,
+            "O": 76.8,
+            "P": 0.2,
+            "Na": 0.2,
+            "S": 0.2,
+            "Cl": 0.2,
+            "K": 0.2
+        },
+        "density": 1.05,
+        "H": 1045,
+        "Electron density": 1.043,
+        "SPR": 1.0466
+    },
+    "Pancreas": {
+        "composition": {
+            "H": 10.6,
+            "C": 16.9,
+            "N": 2.2,
+            "O": 69.4,
+            "P": 0.2,
+            "Na": 0.2,
+            "S": 0.1,
+            "Cl": 0.2,
+            "K": 0.2
+        },
+        "density": 1.04,
+        "H": 1032,
+        "Electron density": 1.034,
+        "SPR": 1.041
+    },
+    "Cartilage": {
+        "composition": {
+            "H": 9.6,
+            "C": 9.9,
+            "N": 2.2,
+            "O": 74.4,
+            "P": 2.2,
+            "Na": 0.5,
+            "S": 0.9,
+            "Cl": 0.3
+        },
+        "density": 1.10,
+        "H": 1098,
+        "Electron density": 1.083,
+        "SPR": 1.081
+    },
+    "Red Marrow": {
+        "composition": {
+            "H": 10.5,
+            "C": 41.4,
+            "N": 3.4,
+            "O": 43.9,
+            "P": 0.1,
+            "Na": 0.2,
+            "S": 0.2,
+            "Cl": 0.2,
+            "K": 0.2,
+            "Fe": 0.1
+        },
+        "density": 1.03,
+        "H": 1014,
+        "Electron density": 1.023,
+        "SPR": 1.041
+    },
+    "Spongiosa": {
+        "composition": {
+            "H": 8.5,
+            "C": 40.4,
+            "N": 2.8,
+            "O": 36.7,
+            "Ca": 7.4,
+            "P": 3.4,
+            "Na": 0.1,
+            "Mg": 0.1,
+            "S": 0.2,
+            "Cl": 0.2,
+            "K": 0.1,
+            "Fe": 0.1
+        },
+        "density": 1.18,
+        "H": 1260,
+        "Electron density": 1.150,
+        "SPR": 1.156        
+    },
+    "Yellow Marrow": {
+        "composition": {
+            "H": 11.5,
+            "C": 64.4,
+            "N": 0.7,
+            "O": 23.1,
+            "Na": 0.1,
+            "S": 0.1,
+            "Cl": 0.1
+        },
+        "density": 0.98,
+        "H": 958,
+        "Electron density": 0.982,
+        "SPR": 1.013
+    },
+    "Skin": {
+        "composition": {
+            "H": 10.0,
+            "C": 20.4,
+            "N": 4.2,
+            "O": 64.5,
+            "P": 0.1,
+            "Na": 0.2,
+            "S": 0.2,
+            "Cl": 0.3,
+            "K": 0.1
+        },
+        "density": 1.09,
+        "H": 1075,
+        "Electron density": 1.078,
+        "SPR": 1.084
+    },
+    "Spleen": {
+        "composition": {
+            "H": 10.3,
+            "C": 11.3,
+            "N": 3.2,
+            "O": 74.1,
+            "P": 0.3,
+            "Na": 0.1,
+            "S": 0.2,
+            "Cl": 0.2,
+            "K": 0.3
+        },
+        "density": 1.06,
+        "H": 1054,
+        "Electron density": 1.051,
+        "SPR": 1.054
+    },
+    "Testis": {
+        "composition": {
+            "H": 10.6,
+            "C": 9.9,
+            "N": 2.0,
+            "O": 76.6,
+            "P": 0.1,
+            "Na": 0.2,
+            "S": 0.2,
+            "Cl": 0.2,
+            "K": 0.2
+        },
+        "density": 1.04,
+        "H": 1032,
+        "Electron density": 1.032,
+        "SPR": 1.035
+    },
+    "Thyroid": {
+        "composition": {
+            "H": 10.4,
+            "C": 11.9,
+            "N": 2.4,
+            "O": 74.5,
+            "P": 0.1,
+            "Na": 0.2,
+            "S": 0.1,
+            "Cl": 0.2,
+            "K": 0.1,
+            "I": 0.1
+        },
+        "density": 1.05,
+        "H": 1040,
+        "Electron density": 1.041,
+        "SPR": 1.045
+    },
+    "Skeleton - Cortical Bone": {
+        "composition": {
+            "H": 3.4,
+            "C": 15.5,
+            "N": 4.2,
+            "O": 43.5,
+            "Ca": 22.5,
+            "P": 10.3,
+            "Na": 0.1,
+            "Mg": 0.2,
+            "S": 0.3
+        },
+        "density": 1.92,
+        "H": 2376,
+        "Electron density": 1.781,
+        "SPR": 1.714
+    },
+    "Skeleton - Cranium": {
+        "composition": {
+            "H": 5.0,
+            "C": 21.2,
+            "N": 4.0,
+            "O": 43.5,
+            "Ca": 17.6,
+            "P": 8.1,
+            "Na": 0.1,
+            "Mg": 0.2,
+            "S": 0.3
+        },
+        "density": 1.61,
+        "H": 1903,
+        "Electron density": 1.517,
+        "SPR": 1.480
+    },
+    "Skeleton - Femur": {
+        "composition": {
+            "H": 7.0,
+            "C": 34.5,
+            "N": 2.8,
+            "O": 36.8,
+            "Ca": 12.9,
+            "P": 5.5,
+            "Na": 0.1,
+            "Mg": 0.1,
+            "S": 0.2,
+            "Cl": 0.1
+        },
+        "density": 1.33,
+        "H": 1499,
+        "Electron density": 1.278,
+        "SPR": 1.269
+    },
+    "Skeleton - Humerus": {
+        "composition": {
+            "H": 6.0,
+            "C": 31.4,
+            "N": 3.1,
+            "O": 36.9,
+            "Ca": 15.2,
+            "P": 7.0,
+            "Na": 0.1,
+            "Mg": 0.1,
+            "S": 0.3
+        },
+        "density": 1.46,
+        "H": 1683,
+        "Electron density": 1.389,
+        "SPR": 1.370
+    },
+    "Skeleton - Mandible": {
+        "composition": {
+            "H": 4.6,
+            "C": 19.9,
+            "N": 4.1,
+            "O": 43.5,
+            "Ca": 18.7,
+            "P": 8.6,
+            "Na": 0.1,
+            "Mg": 0.2,
+            "S": 0.3
+        },
+        "density": 1.68,
+        "H": 2006,
+        "Electron density": 1.577,
+        "SPR": 1.534
+    },
+    "Skeleton - Ribs (2nd, 6th)": {
+        "composition": {
+            "H": 6.4,
+            "C": 26.3,
+            "N": 3.9,
+            "O": 43.6,
+            "Ca": 13.1,
+            "P": 6.0,
+            "Na": 0.1,
+            "Mg": 0.1,
+            "S": 0.3,
+            "Cl": 0.1,
+            "K": 0.1
+        },
+        "density": 1.41,
+        "H": 1595,
+        "Electron density": 1.347,
+        "SPR": 1.329
+    },
+    "Skeleton - Ribs (10th)": {
+        "composition": {
+            "H": 5.6,
+            "C": 23.5,
+            "N": 4.0,
+            "O": 43.4,
+            "Ca": 15.6,
+            "P": 7.2,
+            "Na": 0.1,
+            "Mg": 0.1,
+            "S": 0.3,
+            "Cl": 0.1,
+            "K": 0.1
+        },
+        "density": 1.52,
+        "H": 1763,
+        "Electron density": 1.441,
+        "SPR": 1.413
+    },
+    "Skeleton - Sacrum": {
+        "composition": {
+            "H": 7.4,
+            "C": 30.2,
+            "N": 3.7,
+            "O": 43.8,
+            "Ca": 9.8,
+            "P": 4.5,
+            "Mg": 0.1,
+            "S": 0.2,
+            "Cl": 0.1,
+            "K": 0.1,
+            "Fe": 0.1
+        },
+        "density": 1.29,
+        "H": 1413,
+        "Electron density": 1.244,
+        "SPR": 1.238
+    },
+    "Skeleton - Spongiosa": {
+        "composition": {
+            "H": 8.5,
+            "C": 40.4,
+            "N": 2.8,
+            "O": 36.7,
+            "Ca": 7.4,
+            "P": 3.4,
+            "Na": 0.1,
+            "Mg": 0.1,
+            "S": 0.2,
+            "Cl": 0.2,
+            "K": 0.1,
+            "Fe": 0.1
+        },
+        "density": 1.18,
+        "H": 1260,
+        "Electron density": 1.150,
+        "SPR": 1.156
+    },
+    "Skeleton - Vertebral Column (C4)": {
+        "composition": {
+            "H": 6.3,
+            "C": 26.1,
+            "N": 3.9,
+            "O": 43.6,
+            "Ca": 13.3,
+            "P": 6.1,
+            "Na": 0.1,
+            "Mg": 0.1,
+            "S": 0.3,
+            "Cl": 0.1,
+            "K": 0.1,
+            "Fe": 0.1
+        },
+        "density": 1.42,
+        "H": 1609,
+        "Electron density": 1.335,
+        "SPR": 1.337
+    },
+    "Skeleton - Vertebral Column (D6, L3)": {
+        "composition": {
+            "H": 7.0,
+            "C": 28.7,
+            "N": 3.8,
+            "O": 43.7,
+            "Ca": 11.1,
+            "P": 5.1,
+            "Mg": 0.1,
+            "S": 0.2,
+            "Cl": 0.1,
+            "K": 0.1,
+            "Fe": 0.1
+        },
+        "density": 1.33,
+        "H": 1477,
+        "Electron density": 1.278,
+        "SPR": 1.267
+    }
+}
