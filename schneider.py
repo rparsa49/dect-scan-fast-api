@@ -173,7 +173,7 @@ def calculate_mu(material, Kph, Kcoh, KKN):
 # Calculate HU for tissues
 def calculate_HU(tissues, Kph, Kcoh, KKN, flag="Phantoms"):
     mu_water = calculate_mu("True Water", Kph, Kcoh, KKN)
-    
+    res = []
     for tissue in tissues:
         Ng = compute_Ng(tissue) if flag == "Phantoms" else compute_Ng(tissue, "ICRP")
         rho = MATERIAL_PROPERTIES[tissue]["density"] if flag == "Phantoms" else ICRP_PROPERTIES[tissue]["density"]
@@ -185,18 +185,45 @@ def calculate_HU(tissues, Kph, Kcoh, KKN, flag="Phantoms"):
         mu = rhoNg * (Kph * Zbar ** 3.62 + Kcoh * Zhat ** 1.86 + KKN)  # cm^-1
         
         HU = hounsfield_schneider(mu, mu_water)
+        res.append(HU)
         print(f"{tissue:<15} | Calculated HU: {HU:.2f}")
+    return res
+
+# Calculate mean excitation energy from eq 4
+def compute_I(material, flag="Phantoms"):
+    composition = MATERIAL_PROPERTIES[material]["composition"] if flag == "Phantoms" else ICRP_PROPERTIES[material]["composition"]
+    
+    num = 0.0
+    den = 0.0 
+    
+    for element, weight_fraction in composition.items():
+        Z = ELEMENTAL_PROPERTIES[element]["number"]
+        A = ELEMENTAL_PROPERTIES[element]["mass"]
+        I = ELEMENTAL_PROPERTIES[element]["ionization"]
+        
+        weight = (weight_fraction * Z) / A
+        num += weight * np.log(I)
+        den += weight
+    
+    return np.exp(num / den)
 
 # Calculate beta proton speed fraction of light
-def beta(kvp=200):
+def get_beta(kvp=219):
     kinetic_energy_mev = kvp / 1000
     proton_mass_mev = physical_constants['proton mass energy equivalent in MeV'][0]
     gamma = (proton_mass_mev + kinetic_energy_mev) / proton_mass_mev
     return np.sqrt(1 - (1 / gamma ** 2)) ** 2
 
+# Calculate SPR using eq 1
+def calculate_spr(rhoe, I, I_water=75):
+    me = 9.10938356e-31
+    c = 2.99792458e8
+    beta = get_beta()
+    
+    numerator = (np.log(2*me * (c ** 2) * beta)) / (I*(1 - beta) - beta)
+    denominator = (np.log(2*me * (c ** 2) * beta)) / (I_water*(1 - beta) - beta)
+    return rhoe * (numerator / denominator)
 
-
-# def schneider(phantom_type):
 def schneider(path, phantom_type, radii_ratio):
     dicom_data = pydicom.dcmread(path)
     
@@ -286,16 +313,44 @@ def schneider(path, phantom_type, radii_ratio):
     # Step 4: Compute HU of ICRP tissues using eq. 5 and 8
     ICRP_Tissues = list(ICRP_PROPERTIES.keys())
     print("\n=== HU of ICRP Tissues ===")
-    calculate_HU(ICRP_Tissues, Kph, Kcoh, KKN, flag="ICRP")
+    ICRP_HUs = calculate_HU(ICRP_Tissues, Kph, Kcoh, KKN, flag="ICRP")
     
     # Step 5: Compute electron density for ICRP tissues
     print("\n=== Electron Density of ICRP Tissues ===")
     for material in ICRP_Tissues:
         temp = compute_rhoe_schneider(material, flag="ICRP")
-        print(f"{material:<15} | Electron Density: {temp:.2f}")
+        print(f"{material:<15} | Electron Density: {temp:.3f}")
         rhos_ICRP.append(temp)
     
     # Step 6: Compute SPR for ICRP tissues
+    print("\n=== SPR of ICRP Tissues ===")
+    for i, material in enumerate(ICRP_Tissues):
+        rhoe = rhos_ICRP[i]
+        I = compute_I(material, flag="ICRP")
+        spr = calculate_spr(rhoe, I)
+        
+        print(f"{material:<15} | SPR: {spr:.4f}")
+        sprs.append(spr)
+        
+    # Step 7: Generate Calibration Curve
+    def model_func(HU, a, b):
+        return a * HU + b
     
+    params, _ = curve_fit(model_func, ICRP_HUs, rhos_ICRP)
+    
+    x_fit = np.linspace(min(ICRP_HUs), max(ICRP_HUs), 500)
+    y_fit = model_func(x_fit, *params)
+    
+    plt.figure(figsize=(8, 5))
+    plt.scatter(ICRP_HUs, rhos_ICRP, color='blue', label='Data Points')
+    plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
+    plt.xlabel("Hounsfield Unit (HU)")
+    plt.ylabel("Electron Density")
+    plt.title("Calibration Curve (ICRP)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
 schneider('/Users/royaparsa/Desktop/Gammex-Pelvis-1cm/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200013605.dcm', "body", 0.75)
 # plot_true_vs_calculated_rhoe()
