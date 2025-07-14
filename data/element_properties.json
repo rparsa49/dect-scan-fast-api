@@ -2,87 +2,91 @@
     "H": {
         "number": 1,
         "mass": 1.00794,
-        "ionization": 19.2
+        "ionization": 20.40 
     },
     "B": {
         "number": 5,
         "mass": 10.811,
-        "ionization": 76
+        "ionization": 70.30 
     },
     "C": {
         "number": 6,
         "mass": 12.0107,
-        "ionization": 78
+        "ionization": 73.80 
     },
     "N": {
         "number": 7,
         "mass": 14.0067,
-        "ionization": 82
+        "ionization": 97.80  
     },
     "O": {
         "number": 8,
         "mass": 15.9994,
-        "ionization": 95
+        "ionization": 115.7  
     },
     "F": {
         "number": 9,
         "mass": 18.998,
-        "ionization": 115
+        "ionization": 124.8  
     },
     "Na": {
         "number": 11,
         "mass": 22.98977,
-        "ionization": 149
+        "ionization": 143.0   
     },
     "Mg": {
         "number": 12,
         "mass": 24.305,
-        "ionization": 156
+        "ionization": 151.1  
     },
     "Al": {
         "number": 13,
         "mass": 26.9815,
-        "ionization": 166
+        "ionization": 160.1  
     },
     "Si": {
         "number": 14,
         "mass": 28.0855,
-        "ionization": 173
+        "ionization": 174.5  
     },
     "P": {
         "number": 15,
         "mass": 30.9738,
-        "ionization": 173
+        "ionization": 179.1  
     },
     "Cl": {
         "number": 17,
         "mass": 35.453,
-        "ionization": 174
+        "ionization": 182.6  
     },
     "Ca": {
         "number": 20,
         "mass": 40.078,
-        "ionization": 191
+        "ionization": 191.9   
     },
     "Ti": {
         "number": 22,
         "mass": 47.867,
-        "ionization": 233
+        "ionization": 228.0
     },
     "S": {
         "number": 16,
-        "mass": 32.066
+        "mass": 32.066,
+        "ionization": 183.6  
     },
     "K": {
         "number": 19,
-        "mass": 39.098
+        "mass": 39.098,
+        "ionization": 186.8   
     },
     "Fe": {
         "number": 26,
-        "mass": 55.845
+        "mass": 55.845,
+        "ionization": 278.2   
     },
     "I": {
         "number": 53,
-        "mass": 126.904
+        "mass": 126.904,
+        "ionization": 515.2   
     }
 }
