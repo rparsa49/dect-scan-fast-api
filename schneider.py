@@ -8,6 +8,7 @@ import cv2
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 from scipy.constants import physical_constants
+from numpy.polynomial.polynomial import Polynomial
 
 DATA_DIR = Path("data")
 
@@ -19,6 +20,59 @@ CIRCLE_DATA = load_json("circles.json")
 MATERIAL_PROPERTIES = load_json("material_properties.json")
 ELEMENTAL_PROPERTIES = load_json("element_properties.json")
 ICRP_PROPERTIES = load_json("icrp.json")
+
+
+def validate_ed_calibration(HU_List, materials_list, a, b):
+    def calibration_func(HU):
+        return a * HU + b
+
+    # Deduplicate materials and their HU values
+    seen = set()
+    unique_HU = []
+    unique_materials = []
+    for hu, m in zip(HU_List, materials_list):
+        if m not in seen:
+            seen.add(m)
+            unique_HU.append(hu)
+            unique_materials.append(m)
+
+    adjusted_hu = [1000 * (hu - 1) for hu in unique_HU]
+    predicted_ED = [calibration_func(hu) for hu in adjusted_hu]
+    true_ED = [MATERIAL_PROPERTIES[m]["rho_e_w"] for m in unique_materials]
+
+    # Plotting
+    x_fit = np.linspace(min(adjusted_hu) - 50, max(adjusted_hu) + 50, 500)
+    y_fit = calibration_func(x_fit)
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(x_fit, y_fit, 'r-', label='Calibration Curve (HU → ED)')
+    plt.scatter(adjusted_hu, true_ED, color='blue',
+                label='True ED (from composition)', marker='o')
+    plt.scatter(adjusted_hu, predicted_ED, color='green',
+                label='Predicted ED (from HU)', marker='x')
+
+    # Annotate and draw error lines
+    for i in range(len(adjusted_hu)):
+        plt.plot([adjusted_hu[i], adjusted_hu[i]], [true_ED[i],
+                 predicted_ED[i]], 'gray', linestyle='--', linewidth=1)
+        plt.annotate(
+            unique_materials[i], (adjusted_hu[i], true_ED[i]), fontsize=8, ha='right')
+
+    plt.xlabel("Hounsfield Unit (HU)")
+    plt.ylabel("Electron Density (rho_e)")
+    plt.title("Calibration Curve Validation (Scan Materials)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    # Error metrics
+    true_ED = np.array(true_ED)
+    predicted_ED = np.array(predicted_ED)
+    mae = np.mean(np.abs(true_ED - predicted_ED))
+    rmse = np.sqrt(np.mean((true_ED - predicted_ED)**2))
+    print(f"\nMAE: {mae:.4f}")
+    print(f"RMSE: {rmse:.4f}")
 
 def plot_true_vs_calculated_rhoe():
     true_rhoe = []
@@ -333,19 +387,42 @@ def schneider(path, phantom_type, radii_ratio):
         sprs.append(spr)
         
     # Step 7: Generate Calibration Curve
-    def model_func(HU, a, b):
-        return a * HU + b
+    # def model_func(HU, a, b):
+    #     return a * HU + b
     
-    params, _ = curve_fit(model_func, ICRP_HUs, rhos_ICRP)
+    # params, _ = curve_fit(model_func, ICRP_HUs, rhos_ICRP)
     
+    # x_fit = np.linspace(min(ICRP_HUs), max(ICRP_HUs), 500)
+    # y_fit = model_func(x_fit, *params)
+    
+    # plt.figure(figsize=(8, 5))
+    # plt.scatter(ICRP_HUs, rhos_ICRP, color='blue', label='Data Points')
+    # plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
+    # plt.xlabel("Hounsfield Unit (HU)")
+    # plt.ylabel("Electron Density")
+    # plt.title("Calibration Curve (ICRP)")
+    # plt.legend()
+    # plt.grid(True)
+    # plt.tight_layout()
+    # plt.show()
+    
+    # print("\n=== Validating ED Calibration ===")
+    # a, b = params
+    # validate_ed_calibration(HU_List, materials_list, a, b)
+
+    def model_func(HU, a, b, c, d):
+        return a * np.tanh(b * HU + c) + d
+    
+    params, _ = curve_fit(model_func, ICRP_HUs, sprs)
+
     x_fit = np.linspace(min(ICRP_HUs), max(ICRP_HUs), 500)
     y_fit = model_func(x_fit, *params)
     
     plt.figure(figsize=(8, 5))
-    plt.scatter(ICRP_HUs, rhos_ICRP, color='blue', label='Data Points')
-    plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
+    plt.scatter(ICRP_HUs, sprs, color='blue', label='Data Points')
+    # plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
     plt.xlabel("Hounsfield Unit (HU)")
-    plt.ylabel("Electron Density")
+    plt.ylabel("Stopping Power")
     plt.title("Calibration Curve (ICRP)")
     plt.legend()
     plt.grid(True)
