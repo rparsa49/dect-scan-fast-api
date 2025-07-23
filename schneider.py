@@ -9,6 +9,7 @@ from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 from scipy.constants import physical_constants
 from numpy.polynomial.polynomial import Polynomial
+from sklearn.metrics import mean_squared_error
 
 DATA_DIR = Path("data")
 
@@ -21,56 +22,121 @@ MATERIAL_PROPERTIES = load_json("material_properties.json")
 ELEMENTAL_PROPERTIES = load_json("element_properties.json")
 ICRP_PROPERTIES = load_json("icrp.json")
 
-
-def validate_ed_calibration(HU_List, materials_list, a, b):
-    def calibration_func(HU):
-        return a * HU + b
-
-    # Deduplicate materials and their HU values
+def validate_spr_calibration_fit(material_list, spr_model, model_params, Kph, Kcoh, KKN):
     seen = set()
-    unique_HU = []
     unique_materials = []
-    for hu, m in zip(HU_List, materials_list):
+
+    for m in material_list:
         if m not in seen:
             seen.add(m)
-            unique_HU.append(hu)
             unique_materials.append(m)
 
-    adjusted_hu = [1000 * (hu - 1) for hu in unique_HU]
-    predicted_ED = [calibration_func(hu) for hu in adjusted_hu]
-    true_ED = [MATERIAL_PROPERTIES[m]["rho_e_w"] for m in unique_materials]
+    mu_water = calculate_mu("True Water", Kph, Kcoh, KKN)
+    HU_values, predicted_sprs, true_sprs = [], [], []
+
+    for m in unique_materials:
+        mu = calculate_mu(m, Kph, Kcoh, KKN)
+        HU = hounsfield_schneider(mu, mu_water)
+        HU_values.append(HU)
+
+        # Predict SPR using model
+        predicted_spr = spr_model(HU, *model_params)
+        predicted_sprs.append(predicted_spr)
+
+        # Calculate true SPR
+        rhoe = compute_rhoe_schneider(m)
+        I = compute_I(m)
+        true_spr = calculate_spr(rhoe, I)
+        true_sprs.append(true_spr)
 
     # Plotting
-    x_fit = np.linspace(min(adjusted_hu) - 50, max(adjusted_hu) + 50, 500)
-    y_fit = calibration_func(x_fit)
+    x_fit = np.linspace(min(HU_values)-50, max(HU_values)+50, 500)
+    y_fit = spr_model(x_fit, *model_params)
 
     plt.figure(figsize=(8, 6))
-    plt.plot(x_fit, y_fit, 'r-', label='Calibration Curve (HU → ED)')
-    plt.scatter(adjusted_hu, true_ED, color='blue',
-                label='True ED (from composition)', marker='o')
-    plt.scatter(adjusted_hu, predicted_ED, color='green',
-                label='Predicted ED (from HU)', marker='x')
+    plt.plot(x_fit, y_fit, 'r-', label='Calibration Curve (HU → SPR)')
+    plt.scatter(HU_values, true_sprs, color='blue',
+                label='True SPR (from composition)', marker='o')
+    plt.scatter(HU_values, predicted_sprs, color='green',
+                label='Predicted SPR (from HU)', marker='x')
 
-    # Annotate and draw error lines
-    for i in range(len(adjusted_hu)):
-        plt.plot([adjusted_hu[i], adjusted_hu[i]], [true_ED[i],
-                 predicted_ED[i]], 'gray', linestyle='--', linewidth=1)
-        plt.annotate(
-            unique_materials[i], (adjusted_hu[i], true_ED[i]), fontsize=8, ha='right')
+    for i, mat in enumerate(unique_materials):
+        plt.plot([HU_values[i], HU_values[i]], [true_sprs[i],
+                 predicted_sprs[i]], 'gray', linestyle='--', linewidth=1)
+        plt.annotate(mat, (HU_values[i], true_sprs[i]), fontsize=8, ha='right')
 
     plt.xlabel("Hounsfield Unit (HU)")
-    plt.ylabel("Electron Density (rho_e)")
-    plt.title("Calibration Curve Validation (Scan Materials)")
+    plt.ylabel("Stopping Power Ratio (SPR)")
+    plt.title("Calibration Curve Validation (Scan Materials, HU from Schneider μ)")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.show()
 
     # Error metrics
-    true_ED = np.array(true_ED)
-    predicted_ED = np.array(predicted_ED)
-    mae = np.mean(np.abs(true_ED - predicted_ED))
-    rmse = np.sqrt(np.mean((true_ED - predicted_ED)**2))
+    true_np = np.array(true_sprs)
+    predicted_np = np.array(predicted_sprs)
+    mae = np.mean(np.abs(true_np - predicted_np))
+    rmse = np.sqrt(np.mean((true_np - predicted_np) ** 2))
+    print(f"\nSPR Validation MAE: {mae:.4f}")
+    print(f"SPR Validation RMSE: {rmse:.4f}")
+    
+def validate_ed_calibration_schneider_fit(material_list, a, b, Kph, Kcoh, KKN):
+    """
+    Computes HU from mu for given materials using Schneider model, then plots
+    predicted ED (from HU) vs. true ED (from composition).
+    """
+    seen = set()
+    unique_materials = []
+
+    for m in material_list:
+        if m not in seen:
+            seen.add(m)
+            unique_materials.append(m)
+
+    # Calculate HU using Schneider-based μ values
+    mu_water = calculate_mu("True Water", Kph, Kcoh, KKN)
+    HU_values = []
+
+    for m in unique_materials:
+        mu = calculate_mu(m, Kph, Kcoh, KKN)
+        HU = hounsfield_schneider(mu, mu_water)
+        HU_values.append(HU)
+
+    # Apply calibration model to get predicted ED
+    predicted_ED = [a * hu + b for hu in HU_values]
+    true_ED = [MATERIAL_PROPERTIES[m]["rho_e_w"] for m in unique_materials]
+
+    # Fit curve line
+    x_fit = np.linspace(min(HU_values) - 50, max(HU_values) + 50, 500)
+    y_fit = a * x_fit + b
+
+    # Plotting
+    plt.figure(figsize=(8, 6))
+    plt.plot(x_fit, y_fit, 'r-', label='Calibration Curve (HU → ED)')
+    plt.scatter(HU_values, true_ED, color='blue',
+                label='True ED (from composition)', marker='o')
+    plt.scatter(HU_values, predicted_ED, color='green',
+                label='Predicted ED (from HU)', marker='x')
+
+    for i, mat in enumerate(unique_materials):
+        plt.plot([HU_values[i], HU_values[i]], [true_ED[i],
+                 predicted_ED[i]], 'gray', linestyle='--', linewidth=1)
+        plt.annotate(mat, (HU_values[i], true_ED[i]), fontsize=8, ha='right')
+
+    plt.xlabel("Hounsfield Unit (HU)")
+    plt.ylabel("Electron Density (rho_e)")
+    plt.title("Calibration Curve Validation (Scan Materials, HU from Schneider μ)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    # Error metrics
+    true_ED_np = np.array(true_ED)
+    predicted_ED_np = np.array(predicted_ED)
+    mae = np.mean(np.abs(true_ED_np - predicted_ED_np))
+    rmse = np.sqrt(np.mean((true_ED_np - predicted_ED_np) ** 2))
     print(f"\nMAE: {mae:.4f}")
     print(f"RMSE: {rmse:.4f}")
 
@@ -387,40 +453,43 @@ def schneider(path, phantom_type, radii_ratio):
         sprs.append(spr)
         
     # Step 7: Generate Calibration Curve
-    # def model_func(HU, a, b):
-    #     return a * HU + b
     
-    # params, _ = curve_fit(model_func, ICRP_HUs, rhos_ICRP)
+    # First, calculate the HU from the schneider method for our phantoms
     
-    # x_fit = np.linspace(min(ICRP_HUs), max(ICRP_HUs), 500)
-    # y_fit = model_func(x_fit, *params)
+    def model_func(HU, a, b):
+        return a * HU + b
     
-    # plt.figure(figsize=(8, 5))
-    # plt.scatter(ICRP_HUs, rhos_ICRP, color='blue', label='Data Points')
-    # plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
-    # plt.xlabel("Hounsfield Unit (HU)")
-    # plt.ylabel("Electron Density")
-    # plt.title("Calibration Curve (ICRP)")
-    # plt.legend()
-    # plt.grid(True)
-    # plt.tight_layout()
-    # plt.show()
+    params, _ = curve_fit(model_func, ICRP_HUs, rhos_ICRP)
     
-    # print("\n=== Validating ED Calibration ===")
-    # a, b = params
-    # validate_ed_calibration(HU_List, materials_list, a, b)
-
-    def model_func(HU, a, b, c, d):
-        return a * np.tanh(b * HU + c) + d
-    
-    params, _ = curve_fit(model_func, ICRP_HUs, sprs)
-
     x_fit = np.linspace(min(ICRP_HUs), max(ICRP_HUs), 500)
     y_fit = model_func(x_fit, *params)
     
     plt.figure(figsize=(8, 5))
+    plt.scatter(ICRP_HUs, rhos_ICRP, color='blue', label='Data Points')
+    plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
+    plt.xlabel("Hounsfield Unit (HU)")
+    plt.ylabel("Electron Density")
+    plt.title("Calibration Curve (ICRP)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+    
+    print("\n=== Validating ED Calibration ===")
+    a, b = params
+    validate_ed_calibration_schneider_fit(materials_list, a, b, Kph, Kcoh, KKN)
+
+    def logarithmic_spr_model(HU, a, b, c):
+        return a * np.log(HU + b) ** c
+    
+    params, _ = curve_fit(logarithmic_spr_model, ICRP_HUs, sprs, bounds = ([0, 1, 1], [10, 1000, 5]))
+
+    x_fit = np.linspace(min(ICRP_HUs), max(ICRP_HUs), 500)
+    y_fit = logarithmic_spr_model(x_fit, *params)
+    
+    plt.figure(figsize=(8, 5))
     plt.scatter(ICRP_HUs, sprs, color='blue', label='Data Points')
-    # plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
+    plt.plot(x_fit, y_fit, color='red', label='Calibration Curve')
     plt.xlabel("Hounsfield Unit (HU)")
     plt.ylabel("Stopping Power")
     plt.title("Calibration Curve (ICRP)")
@@ -428,6 +497,16 @@ def schneider(path, phantom_type, radii_ratio):
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+    
+    # Validate SPR Fit
+    validate_spr_calibration_fit(
+        material_list=materials_list,
+        spr_model=logarithmic_spr_model,
+        model_params=params,
+        Kph=Kph,
+        Kcoh=Kcoh,
+        KKN=KKN
+    )
 
 schneider('/Users/royaparsa/Desktop/Gammex-Pelvis-1cm/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200013605.dcm', "body", 0.75)
 # plot_true_vs_calculated_rhoe()
