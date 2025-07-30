@@ -508,5 +508,5 @@ def schneider(path, phantom_type, radii_ratio):
         KKN=KKN
     )
 
-schneider('/Users/royaparsa/Desktop/Gammex-Pelvis-1cm/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200013605.dcm', "body", 0.75)
+# schneider('/Users/royaparsa/Desktop/Gammex-Pelvis-1cm/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200013605.dcm', "body", 0.75)
 # plot_true_vs_calculated_rhoe()
