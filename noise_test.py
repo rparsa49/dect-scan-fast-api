@@ -1,22 +1,56 @@
 import cv2
 import numpy as np
 import pydicom
-import matplotlib.pyplot as plt
 from methods.saito import saito
 from methods.hunemohr import hunemohr
 from methods.tanaka import tanaka
 from methods.schneider import schneider
 from pathlib import Path
+import os
+import re
 
 # Constants
 DATA_LOCO = Path("test_images")
+KVP_PAIRS = [(70, 100), (70, 120), (70, 140), (80, 100), (80, 120), (80, 140)]
+SERIES_RE = re.compile(r'^(?:degraded-)?(.+)-(\d+(?:\.\d+)?)-(\d+)$', re.IGNORECASE)
 
-# Take in clean image and apply gaussian noise
-def degrade_image(file):
-    dicom_data = pydicom.dcmread(file)
+# Process uploaded folder of series
+def process_upload(series_path, out_root = "test_images"):
+
+    series_path = Path(series_path)
+    out_root = Path(out_root)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    for root, subdirs, files in os.walk(series_path):
+        root = Path(root)
+
+        # Skip writing anything for the top if it directly contains files you don't intend to process.
+        for filename in files:
+            if filename.startswith('.') or filename == '.DS_Store':
+                continue
+
+            src_path = root / filename
+
+            # Build output directory under the fixed local folder "test_images"
+            subfolder_name = root.name 
+            out_dir = out_root / f"degraded-{subfolder_name}"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            degrade_image(src_path, out_dir)
+
+def degrade_image(file: str | Path, out_dir: str | Path):
+    """
+    Read a DICOM, add Gaussian noise, and write PNG to:
+      out_dir / (stem + ".png")
+    """
+    file = Path(file)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    dicom_data = pydicom.dcmread(str(file))
     image = dicom_data.pixel_array.astype(np.float32)
-   
-    image = (image - np.min(image)) / (np.max(image) - np.min(image))  
+    
+    image = (image - np.min(image)) / (np.max(image) - np.min(image))
     image = cv2.resize(image, (512, 512))
     image = image.flatten()
     image = np.expand_dims(image, axis=0)
@@ -26,44 +60,64 @@ def degrade_image(file):
     var = 0.01
     sigma = np.sqrt(var)
     n = np.random.normal(loc = mean, scale = sigma, size = (x, y))
-    
     degraded_image = image + n
-    
-    out_filename = f"{Path(file).stem}.png"
-    out_path = DATA_LOCO / out_filename
-    
+
+    out_path = out_dir / f"{file.stem}.png"
     degraded_2d = degraded_image.reshape(512, 512)
     degraded_u8 = (np.clip(degraded_2d, 0.0, 1.0) * 255.0).astype(np.uint8)
-    cv2.imwrite(str(out_path), degraded_u8)
-    
+
+    ok = cv2.imwrite(str(out_path), degraded_u8)
+    if not ok:
+        raise IOError(f"Failed to write image to {out_path}")
+
     return degraded_image
 
-# Run test on selected method and series
-def test(high, low, method, phantom_type, radii):
-    # Create noisy images
-    noisy_high, noisy_low = [], []
-    for h, l in zip(high, low):
-        nh = degrade_image(h)
-        nh = nh.save()
-        noisy_low.append(degrade_image(l))
+def index_series_by_kvp(root):
+    '''
+    Walks root directory and returns {(prefix, thickness) : {kvp: pathToSeries}}
+    '''
+    index = {}
     
-    # Run tests on selected method
-    if method == "Saito":
-        clean_res = saito(high, low, phantom_type, radii)
-        noisy_res = saito(noisy_high, noisy_low, phantom_type, radii)
-        return clean_res, noisy_res
-    if method == "Tanaka":
-        clean_res = tanaka(high, low, phantom_type, radii)
-        noisy_res = tanaka(noisy_high, noisy_low, phantom_type, radii)
-        return clean_res, noisy_res
-    if method == "Hunemohr":
-        clean_res = hunemohr(high, low, phantom_type, radii)
-        noisy_res = hunemohr(noisy_high, noisy_low, phantom_type, radii)
-        return clean_res, noisy_res
-    if method == "Schneider":
-        clean_res = schneider(high, phantom_type, radii)
-        noisy_res = schneider(high, phantom_type, radii)
-        return clean_res, noisy_res
+    for paths, subdirs, files in os.walk(root):
+        base = Path(paths).name
+        m = SERIES_RE.match(base)
+        if not m:
+            continue
+        prefix, thickness, kvp = m.groups()
+        kvp = int(kvp)
+        
+        key = (prefix, thickness)
+        index.setdefault(key, {})
+        index[key][kvp] = Path(paths)
+    return index
+
+# Run test on selected method and series
+def test(series_clean, series_noisy, phantom_type, radii):
+    # Index series
+    clean_idx = index_series_by_kvp(series_clean)
+    noisy_idx = index_series_by_kvp(series_noisy)
+
+    # Try each kVp pair
+    common_keys = sorted(set(clean_idx.keys()) | set(noisy_idx.keys()))
     
 
-degrade_image("/Users/royaparsa/Desktop/test-data/high/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200019274.dcm")
+if __name__ == "__main__":
+
+    # process_upload("/Users/royaparsa/Desktop/Body-0.6/")
+    
+    series_clean = "/Users/royaparsa/Desktop/Body-0.6/"
+    series_noisy = "/Users/royaparsa/NYPC-DCT-BE/test_images"
+
+    phantom_type = "Body"
+    radii = 100
+
+    print("Indexing series...")
+    clean_idx = index_series_by_kvp(series_clean)
+    noisy_idx = index_series_by_kvp(series_noisy)
+
+    print("CLEAN keys found:", list(clean_idx.keys()))
+    print("NOISY keys found:", list(noisy_idx.keys()))
+    print()
+
+    # Now run the test harness
+    test(series_clean, series_noisy, phantom_type, radii)
