@@ -11,6 +11,7 @@ from pathlib import Path
 import os
 import re
 from datetime import datetime
+import json 
 
 # Constants
 DATA_LOCO = Path("test_images")
@@ -144,19 +145,90 @@ def index_series_by_kvp(root):
         index[key][kvp] = Path(paths)
     return index
 
+def get_sorted_dicoms(directory: Path):
+    """
+    Returns a sorted list of DICOM file paths in the given directory.
+    """
+    return sorted([p for p in directory.glob("*.dcm") if p.is_file()])
+
 # Run test on selected method and series
 def test(series_clean, series_noisy, phantom_type, radii):
-    # Index series
     clean_idx = index_series_by_kvp(series_clean)
     noisy_idx = index_series_by_kvp(series_noisy)
+    common_keys = sorted(set(clean_idx.keys()) & set(noisy_idx.keys()))
 
-    # Try each kVp pair
-    common_keys = sorted(set(clean_idx.keys()) | set(noisy_idx.keys()))
+    results = []
+
+    for key in common_keys:
+        prefix, thickness = key
+        print(f"\n--- {prefix} | thickness={thickness} ---")
+
+        for kvp_low, kvp_high in KVP_PAIRS:
+            clean_low_dir = clean_idx.get(key, {}).get(kvp_low)
+            clean_high_dir = clean_idx.get(key, {}).get(kvp_high)
+            noisy_low_dir = noisy_idx.get(key, {}).get(kvp_low)
+            noisy_high_dir = noisy_idx.get(key, {}).get(kvp_high)
+
+            if not all([clean_low_dir, clean_high_dir, noisy_low_dir, noisy_high_dir]):
+                print(
+                    f"Skipping {kvp_low}/{kvp_high} due to missing directories")
+                continue
+
+            clean_low_files = get_sorted_dicoms(clean_low_dir)
+            clean_high_files = get_sorted_dicoms(clean_high_dir)
+            noisy_low_files = get_sorted_dicoms(noisy_low_dir)
+            noisy_high_files = get_sorted_dicoms(noisy_high_dir)
+
+            pair_count = min(len(clean_low_files), len(clean_high_files),
+                             len(noisy_low_files), len(noisy_high_files))
+
+            if pair_count == 0:
+                print(f"  No matching file count in {kvp_low}/{kvp_high}")
+                continue
+
+            for i in range(pair_count):
+                clean_low_file = clean_low_files[i]
+                clean_high_file = clean_high_files[i]
+                noisy_low_file = noisy_low_files[i]
+                noisy_high_file = noisy_high_files[i]
+
+                print(f"Running {kvp_low}/{kvp_high} pair index {i}")
+
+                for method_name, method_fn in [
+                    ("saito", saito),
+                    ("hunemohr", hunemohr),
+                    ("tanaka", tanaka)
+                ]:
+                    try:
+                        clean_result = method_fn(
+                            clean_low_file, clean_high_file, phantom_type, radii)
+                        noisy_result = method_fn(
+                            noisy_low_file, noisy_high_file, phantom_type, radii)
+
+                        results.append({
+                            "phantom": prefix,
+                            "thickness": thickness,
+                            "kvp_pair": (kvp_low, kvp_high),
+                            "method": method_name,
+                            "pair_index": i,
+                            "clean": clean_result,
+                            "noisy": noisy_result
+                        })
+
+                    except Exception as e:
+                        print(f"    [!] Error running {method_name} on pair index {i} ({kvp_low}/{kvp_high}): {e}")
+                        return
+
+    # Save output to JSON
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_path = Path(f"method_comparison_{timestamp}.json")
+    with open(out_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\n✅ Results saved to {out_path}")
     
-
 if __name__ == "__main__":
 
-    process_upload("/Users/royaparsa/Desktop/Body-0.6/")
+    # process_upload("/Users/royaparsa/Desktop/Body-0.6/")
     
     series_clean = "/Users/royaparsa/Desktop/Body-0.6/"
     series_noisy = "/Users/royaparsa/NYPC-DCT-BE/test_images"
