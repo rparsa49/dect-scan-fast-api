@@ -54,7 +54,6 @@ def zeff_lhs(zeff):
 # Saito 2017a Eq. 8 - RHS
 def zeff_rhs(gamma, ct, rho):
     v = gamma * ((ct/rho) - 1)
-    print(v)
     return gamma * ((ct/rho) - 1)
 
 # Hunemohr 2014 Eq. 21 - Effective Atomic Number
@@ -293,7 +292,6 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         if material not in TRUE_RHO or material == '50% CaCO3' or material == '30% CaCO3':
             print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
-        print(material)
     
         materials_list.append(material)
     
@@ -395,12 +393,14 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         ground_rho.append(MATERIAL_PROPERTIES[mat]["rho_e_w"])
     rmse_rho = mean_squared_error(ground_rho, calculated_rhos)
     r2_rho = r2_score(ground_rho, calculated_rhos)
-    
+    print(f"RMSE for rho: {rmse_rho} with R2 of {r2_rho}")
+
     ground_z = []
     for mat in materials_list:
         ground_z.append(MATERIAL_PROPERTIES[mat]["Z_eff"])
     rmse_z = mean_squared_error(ground_z, optimized_zs)
     r2_z = r2_score(ground_z, optimized_zs)
+    print(f"RMSE for Z: {rmse_z} with R2 of {r2_z}")
 
     # Return JSON
     results = {

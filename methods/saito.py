@@ -8,6 +8,7 @@ import cv2
 from scipy.constants import physical_constants
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression
+import matplotlib.pyplot as plt
 
 DATA_DIR = Path("data")
 
@@ -62,7 +63,7 @@ def reduce_ct(HU):
 
 # Saito 2017a Eq. 8 - LHS
 def zeff_lhs(zeff):
-    return (zeff / 7.45) ** 3.3
+    return ((zeff / 7.45) ** 3.3) - 1
 
 # Saito 2017a Eq. 8 - RHS
 def zeff_rhs(gamma, ct, rho):
@@ -153,6 +154,9 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     high_image = dicom_data_h.pixel_array
     low_image = dicom_data_l.pixel_array
 
+    # print(dicom_data_h.RescaleSlope)
+    # print(dicom_data_h.RescaleIntercept)
+
     HU_H_List, HU_L_List, materials_list = [], [], []
     calculated_rhos = []
     mean_excitations = []
@@ -167,23 +171,23 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
             print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
         
-        materials_list.append(material)
-        # Mask for circular region
-        mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        if material not in materials_list:
+            materials_list.append(material)
+            # Mask for circular region
+            mask = np.zeros(high_image.shape, dtype=np.uint8)
+            cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
 
-        high_pixel_values = high_image[mask == 1]
-        low_pixel_values = low_image[mask == 1]
+            high_pixel_values = high_image[mask == 1]
+            low_pixel_values = low_image[mask == 1]
 
-        mean_high_hu = np.mean(high_pixel_values) * \
-            dicom_data_h.RescaleSlope + dicom_data_h.RescaleIntercept
-        mean_low_hu = np.mean(low_pixel_values) * \
-            dicom_data_l.RescaleSlope + dicom_data_l.RescaleIntercept
+            mean_high_hu = np.mean(dicom_data_h.RescaleSlope * high_pixel_values) + dicom_data_h.RescaleIntercept
+            mean_low_hu = np.mean(dicom_data_l.RescaleSlope * low_pixel_values) + dicom_data_l.RescaleIntercept
 
-        # Create HU lists
-        HU_H_List.append(mean_high_hu)
-        HU_L_List.append(mean_low_hu)
-        
+            # Create HU lists
+            HU_H_List.append(mean_high_hu)
+            HU_L_List.append(mean_low_hu)
+    
+    
     print(f"High HU List: {HU_H_List}\n")
     print(f"Low HU List: {HU_L_List}\n")
 
@@ -209,13 +213,16 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     
     # Step 4: Optimize gamma using true Zeff and estimated rho
     zeff_list = [TRUE_ZEFF[mat] for mat in materials_list]
+
     gamma = optimize_gamma(zeff_list, reduced_ct, calculated_rhos)
-        
-    # Step 5: Calculate estimated Zeff
-    calculated_zeffs = [(np.abs(zeff_rhs(gamma, ct, rho)) ** (1/3.3) * 7.45)for ct, rho in zip(reduced_ct, calculated_rhos)]
+    
+    print(f"Gamma is {gamma}")
+      
+    # Step 5: Calculate estimated Zeff (take out abs)
+    calculated_zeffs = [(zeff_rhs(gamma, ct, rho) + 1) ** (1/3.3) * 7.45 for ct, rho in zip(reduced_ct, calculated_rhos)]
 
     for mat, z in zip(materials_list, calculated_zeffs):
-        print(f"Material: {mat}'s calculated Z: {z}")
+        print(f"Material: {mat}'s calculated Z: {z} and true Z: {MATERIAL_PROPERTIES[mat]['Z_eff']}")
     
     # Step 6: Calculate Mean Excitation Energy
     for mat in materials_list:
@@ -235,7 +242,7 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
         I = get_I(i)
         beta2 = beta(200)
         spr = spr_tanaka(rho, I, beta2)
-        sprs.append(spr)
+        sprs.append(spr) 
         
     # Step 8: Calculate error
     ground_rho = []
@@ -244,14 +251,16 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     rmse_rho = mean_squared_error(ground_rho, calculated_rhos)
     r2_rho = r2_score(ground_rho, calculated_rhos)
     print(f"RMSE for Rho: {rmse_rho}")
-    
+    print(f"r2 for Rho: {r2_rho}")
+
     ground_z = []
     for mat in materials_list:
         ground_z.append(MATERIAL_PROPERTIES[mat]["Z_eff"])
     rmse_z = mean_squared_error(ground_z, calculated_zeffs)
     r2_z = r2_score(ground_z, calculated_zeffs)
     print(f"RMSE for Z: {rmse_z}")
-    
+    print(f"r2 for Z: {r2_z}")
+
     print(f"R2 for lin reg {r}\n\n")
     
     # Return JSON
@@ -272,5 +281,4 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     }     
     
     # return results
-    
     return json.dumps(results, indent=4)
