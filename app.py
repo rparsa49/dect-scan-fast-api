@@ -23,6 +23,7 @@ from typing import Callable, Any, Dict, List, Tuple
 from pydicom.dataset import FileDataset
 from pydicom.uid import generate_uid, ExplicitVRLittleEndian
 from datetime import datetime
+from matplotlib.colors import Normalize
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -336,8 +337,9 @@ async def clean_noise(request: Request):
         "low": new_low
     }
 
+
 @app.post("/test-calibration")
-async def test_calibration(calibration_file: UploadFile = File(...), dicom_files: List[UploadFile] = File(...)):
+async def test_calibration(calibration_file: UploadFile = File(...), files: List[UploadFile] = File(...)):
     if not calibration_file.filename.endswith(".json"):
         raise HTTPException(
             status_code=400, detail="Invalid calibration file type. Please upload a JSON file.")
@@ -355,7 +357,7 @@ async def test_calibration(calibration_file: UploadFile = File(...), dicom_files
 
     # 2. Process the DICOM files
     dicom_files_list = []
-    for file in dicom_files:
+    for file in files:
         file_path = os.path.join(IMAGES_DIR, file.filename)
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
         with open(file_path, "wb") as f:
@@ -415,16 +417,17 @@ async def test_calibration(calibration_file: UploadFile = File(...), dicom_files
     low_dicom_path = convert_to_dicom_path(
         low_kvp_image_paths[0], is_high=False)
 
-    # Extract calibration parameters
+    # Safely extract and convert calibration parameters with default values
+    # The float() conversion will ensure a valid number is passed to the test function
     params = {
-        "alpha": calibration_data.get("alpha"),
-        "a": calibration_data.get("a"),
-        "b": calibration_data.get("b"),
-        "r": calibration_data.get("r"),
-        "gamma": calibration_data.get("gamma"),
-        "c": calibration_data.get("c"),
-        "c0": calibration_data.get("c0"),
-        "c1": calibration_data.get("c1"),
+        "alpha": float(calibration_data.get("alpha", 0.0)),
+        "a": float(calibration_data.get("a", 0.0)),
+        "b": float(calibration_data.get("b", 0.0)),
+        "r": float(calibration_data.get("r", 0.0)),
+        "gamma": float(calibration_data.get("gamma", 0.0)),
+        "c": float(calibration_data.get("c", 0.0)),
+        "c0": float(calibration_data.get("c0", 0.0)),
+        "c1": float(calibration_data.get("c1", 0.0)),
     }
 
     try:
@@ -432,8 +435,8 @@ async def test_calibration(calibration_file: UploadFile = File(...), dicom_files
             analysis_result_str = saito_test(
                 high_dicom_path,
                 low_dicom_path,
-                "head",  # Assuming 'head' for phantom type
-                1,       # Assuming 1 for radii_ratios
+                "head",
+                1,
                 params["alpha"],
                 params["a"],
                 params["b"],
@@ -475,7 +478,7 @@ async def test_calibration(calibration_file: UploadFile = File(...), dicom_files
         return JSONResponse({
             "high_kvp_images": high_kvp_image_paths,
             "low_kvp_images": low_kvp_image_paths,
-            "analysis_results": processed_results,
+            "analysis_results": analysis_result,
             "model": model_name
         })
 
@@ -894,3 +897,196 @@ def run_methods(i: int, clean_high_file: Path, clean_low_file: Path, noisy_high_
         logger.error(
             f"    [!] Error running {method_name} on pair index {i} ({kvp_low}/{kvp_high}): {e}")
     return result
+
+
+def _load_dicom_hu(path: str):
+    ds = pydicom.dcmread(str(path))
+    arr = ds.pixel_array.astype(np.float32)
+    slope = float(getattr(ds, "RescaleSlope", 1.0))
+    inter = float(getattr(ds, "RescaleIntercept", 0.0))
+    return arr * slope + inter, ds
+
+
+def _get_display_window(hu: np.ndarray, ds: Optional[pydicom.dataset.FileDataset]) -> Tuple[float, float]:
+    wc, ww = getattr(ds, "WindowCenter", None), getattr(
+        ds, "WindowWidth", None)
+
+    def _f(x):
+        if hasattr(x, "__len__"):
+            return float(x[0])
+        try:
+            return float(x)
+        except Exception:
+            return None
+
+    c, w = _f(wc), _f(ww)
+    if c and w and w > 1e-6:
+        return c - w/2, c + w/2
+    q1, q99 = np.nanpercentile(hu, [1, 99])
+    if q99 <= q1:
+        q1, q99 = np.nanmin(hu), np.nanmax(hu)
+    return float(q1), float(q99)
+
+
+def _apply_window_to_01(hu: np.ndarray, vmin: float, vmax: float) -> np.ndarray:
+    return np.clip((hu - vmin) / max(vmax - vmin, 1e-6), 0, 1)
+
+
+def _colorize_inside_masks_single(base_gray01: np.ndarray,
+                                  circles: List[Dict],
+                                  spr_table: Dict[str, float],
+                                  spr_range: Optional[Tuple[float, float]],
+                                  cmap_name: str = "viridis",
+                                  saturation: float = 0.95,
+                                  draw_outline: bool = False,
+                                  phantom_material: str = "Background",
+                                  phantom_thresh: float = 0.02) -> Tuple[np.ndarray, Tuple[float, float]]:
+
+    H, W = base_gray01.shape
+    base_rgb = np.stack([base_gray01]*3, axis=-1)
+
+    # Build used range (inserts + phantom)
+    used = [float(spr_table.get(c["material"], 1.00)) for c in circles]
+    used.append(float(spr_table.get(phantom_material, 1.00)))
+    if spr_range is None:
+        spr_min, spr_max = float(np.min(used)), float(np.max(used))
+        if spr_max <= spr_min:
+            spr_max = spr_min + 1e-3
+    else:
+        spr_min, spr_max = spr_range
+
+    norm = Normalize(vmin=spr_min, vmax=spr_max)
+    cmap = plt.get_cmap(cmap_name)
+
+    # Work in HSV to keep luminance from base but swap hue/sat by SPR
+    hsv = cv2.cvtColor((base_rgb*255).astype(np.uint8),
+                       cv2.COLOR_RGB2HSV).astype(np.float32)
+    yy, xx = np.ogrid[:H, :W]
+    circle_union = np.zeros((H, W), dtype=bool)
+
+    # Color inserts
+    for c in circles:
+        spr = float(spr_table.get(c["material"], 1.00))
+        rgb = np.array(cmap(norm(spr))[:3], dtype=np.float32).reshape(1, 1, 3)
+        hsv_color = cv2.cvtColor(
+            (rgb*255).astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+        h = hsv_color[0, 0, 0]
+        mask = (xx - c["x"])**2 + (yy - c["y"])**2 <= c["r"]**2
+        circle_union |= mask
+        hsv[mask, 0] = h
+        hsv[mask, 1] = saturation*255
+        if draw_outline:
+            cv2.circle(hsv, (c["x"], c["y"]), c["r"],
+                       (h, 0, hsv[mask, 2].mean()), 1)
+
+    # Color phantom gray background (exclude black + inserts)
+    phantom_mask = (base_gray01 > phantom_thresh) & (~circle_union)
+    phantom_spr = float(spr_table.get(phantom_material, 1.00))
+    phantom_rgb = np.array(cmap(norm(phantom_spr))[
+                           :3], dtype=np.float32).reshape(1, 1, 3)
+    phantom_hsv = cv2.cvtColor(
+        (phantom_rgb*255).astype(np.uint8), cv2.COLOR_RGB2HSV).astype(np.float32)
+    phantom_h = phantom_hsv[0, 0, 0]
+    hsv[phantom_mask, 0] = phantom_h
+    hsv[phantom_mask, 1] = saturation*255
+
+    # Convert back to RGB [0..1]
+    colored = cv2.cvtColor(hsv.astype(np.uint8),
+                           cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
+    return colored, (spr_min, spr_max)
+
+
+def _save_rgb_png(rgb01: np.ndarray, save_path: str):
+    # rgb01 assumed in [0,1]
+    plt.imsave(save_path, np.clip(rgb01, 0, 1))
+    
+
+@app.post("/make-spr-map")
+async def make_spr_map(request: Request):
+    """
+    Create a single-image SPR map for display:
+    - Uses the DICOM behind the provided image_url
+    - Colors inserts + phantom gray background from provided spr_values (fallback to DEFAULT_SPR for missing)
+    """
+    data = await request.json()
+
+    phantom = data.get("phantom")                     # "Head" or "Body"
+    which = data.get("which", "high").lower()         # "high" or "low"
+    image_url = data.get("image_url")
+    spr_values = data.get("spr_values", {})           # dict: material -> SPR
+    spr_range = data.get("spr_range")                 # [min, max] optional
+    cmap_name = data.get("cmap", "viridis")
+    saturation = float(data.get("saturation", 0.95))
+    draw_outline = bool(data.get("draw_outline", False))
+    phantom_material = data.get("phantom_material", "Background")
+
+    if phantom not in CIRCLE_DATA:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid phantom type. Choose from: {list(CIRCLE_DATA.keys())}")
+    if not image_url:
+        raise HTTPException(status_code=400, detail="Missing image_url.")
+    if which not in ("high", "low"):
+        raise HTTPException(
+            status_code=400, detail='Parameter "which" must be "high" or "low".')
+
+    # Build SPR table (calculated values override any defaults)
+    spr_table = {}
+    # start empty; you could prefill with a default table if desired
+    spr_table.update({})
+    for k, v in spr_values.items():
+        try:
+            spr_table[str(k)] = float(v)
+        except Exception:
+            spr_table[str(k)] = 1.00
+
+    # Ensure phantom background has an SPR
+    if phantom_material not in spr_table:
+        spr_table[phantom_material] = float(
+            spr_values.get(phantom_material, 1.00))
+
+    # Resolve DICOM path behind the chosen PNG URL
+    dicom_path = convert_to_dicom_path(image_url, is_high=(which == "high"))
+
+    try:
+        # 1) Load HU + compute display window
+        hu, ds = _load_dicom_hu(dicom_path)
+        vmin, vmax = _get_display_window(hu, ds)
+        base01 = _apply_window_to_01(hu, vmin, vmax)
+
+        # 2) Get circle definitions for this phantom
+        circles = CIRCLE_DATA[phantom]
+        circles_norm = [{"x": int(c["x"]), "y": int(c["y"]), "r": int(
+            c["radius"]), "material": str(c["material"])} for c in circles]
+
+        # 3) Colorize to produce single-image SPR map
+        # spr_range may be None or a pair [min, max]
+        if spr_range is not None:
+            try:
+                spr_range = (float(spr_range[0]), float(spr_range[1]))
+            except Exception:
+                spr_range = None
+
+        overlay_rgb, used_range = _colorize_inside_masks_single(
+            base01, circles_norm, spr_table, spr_range,
+            cmap_name=cmap_name, saturation=saturation,
+            draw_outline=draw_outline, phantom_material=phantom_material
+        )
+
+        # 4) Save PNG in /processed_images and return URL
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_name = f"sprmap_{phantom}_{which}_{stamp}.png"
+        out_path = os.path.join(IMAGES_DIR, out_name)
+        _save_rgb_png(overlay_rgb, out_path)
+
+        return JSONResponse({
+            "spr_map": f"/processed_images/{out_name}",
+            "spr_minmax": {"min": used_range[0], "max": used_range[1]},
+            "cmap": cmap_name
+        })
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("SPR map generation failed")
+        raise HTTPException(
+            status_code=500, detail=f"SPR map generation failed: {e}")
