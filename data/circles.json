@@ -158,5 +158,315 @@
             "radius": 14,
             "material": "Cortical Bone"
         }
-    ]
+    ],
+    "3d-head 0-ring": [
+        {
+            "x": 269,
+            "y": 219,
+            "radius": 15,
+            "material": "Inner Bone"
+        },
+        {
+            "x": 213,
+            "y": 236,
+            "radius": 15,
+            "material": "Liver"
+        },
+        {
+            "x": 321,
+            "y": 248,
+            "radius": 16,
+            "material": "50% CaCO3"
+        },
+        {
+            "x": 184,
+            "y": 287,
+            "radius": 14,
+            "material": "LN-350"
+        },
+        {
+            "x": 262,
+            "y": 296,
+            "radius": 15,
+            "material": "Cortical Bone"
+        },
+        {
+            "x": 338,
+            "y": 304,
+            "radius": 15,
+            "material": "LN-450"
+        },
+        {
+            "x": 257,
+            "y": 334,
+            "radius": 15,
+            "material": "Adipose"
+        },
+        {
+            "x": 201,
+            "y": 344,
+            "radius": 16,
+            "material": "30% CaCO3"
+        },
+        {
+            "x": 309,
+            "y": 357,
+            "radius": 15,
+            "material": "Brain"
+        },
+        {
+            "x": 253,
+            "y": 374,
+            "radius": 15,
+            "material": "Breast"
+        }
+   ],
+   "3d-head 1-ring": [
+    {
+        "x": 243,
+        "y": 208,
+        "radius": 15,
+        "material": "Inner Bone"
+    },
+    {
+        "x": 298,
+        "y": 230,
+        "radius": 15,
+        "material": "50% CaCO3"
+    },
+    {
+        "x": 189,
+        "y": 231,
+        "radius": 16,
+        "material": "Liver"
+    },
+    {
+        "x": 166,
+        "y": 285,
+        "radius": 15,
+        "material": "LN-350"
+    },
+    {
+        "x": 244,
+        "y": 285,
+        "radius": 16,
+        "material": "Cortical Bone"
+    },
+    {
+        "x": 321,
+        "y": 285,
+        "radius": 16,
+        "material": "LN-450"
+    },
+    {
+        "x": 243,
+        "y": 323,
+        "radius": 16,
+        "material": "Adipose"
+    },
+    {
+        "x": 189,
+        "y": 339,
+        "radius": 15,
+        "material": "30% CaCO3"
+    },
+    {
+        "x": 297,
+        "y": 340,
+        "radius": 15,
+        "material": "Brain"
+    },
+    {
+        "x": 243,
+        "y": 363,
+        "radius": 16,
+        "material": "Breast"
+    }
+   ],
+   "3d-head 2-ring": [
+    {
+        "x": 263,
+        "y": 244,
+        "radius": 15,
+        "material": "Inner Bone"
+    },
+    {
+        "x": 208,
+        "y": 266,
+        "radius": 16,
+        "material": "Liver"
+    },
+    {
+        "x": 317,
+        "y": 268,
+        "radius": 16,
+        "material": "50% CaCO3"
+    },
+    {
+        "x": 184,
+        "y": 320,
+        "radius": 15,
+        "material": "LN-350"
+    },
+    {
+        "x": 261,
+        "y": 322,
+        "radius": 15,
+        "material": "Cortical Bone"
+    },
+    {
+        "x": 339,
+        "y": 323,
+        "radius": 15,
+        "material": "LN-450"
+    },
+    {
+        "x": 261,
+        "y": 359,
+        "radius": 15,
+        "material": "Adipose"
+    },
+    {
+        "x": 206,
+        "y": 375,
+        "radius": 16,
+        "material": "30% CaCO3"
+    },
+    {
+        "x": 315,
+        "y": 377,
+        "radius": 16,
+        "material": "Brain"
+    },
+    {
+        "x": 260,
+        "y": 399,
+        "radius": 16,
+        "material": "Breast"
+    }
+   ],
+   "3d-head 3-ring": [
+    {
+        "x": 297,
+        "y": 247,
+        "radius": 16,
+        "material": "Inner Bone"
+    },
+    {
+        "x": 241,
+        "y": 257,
+        "radius": 15,
+        "material":"Liver"
+    },
+    {
+        "x": 346,
+        "y": 279,
+        "radius": 16,
+        "material":"50% CaCO3"
+    },
+    {
+        "x": 207,
+        "y": 307,
+        "radius": 15,
+        "material":"LN-350" 
+    },
+    {
+        "x": 281,
+        "y": 322,
+        "radius": 16,
+        "material":"Cortical Bone"
+    },
+    {
+        "x": 358,
+        "y": 338,
+        "radius": 14,
+        "material":"LN-450"
+    },
+    {
+        "x": 274,
+        "y": 359,
+        "radius": 16,
+        "material": "Adipose"
+    },
+    {
+        "x": 219,
+        "y": 365,
+        "radius": 15,
+        "material": "30% CaCO3"
+    },
+    {
+        "x": 325,
+        "y": 387,
+        "radius": 16,
+        "material": "Brain"
+    },
+    {
+        "x": 267,
+        "y": 399,
+        "radius": 15,
+        "material": "Breast"
+    }
+   ],
+   "3d-head 4-ring": [
+        {
+            "x": 254,
+            "y": 179,
+            "radius": 16,
+            "material": "Inner Bone"
+        },
+        {
+            "x": 197,
+            "y": 196,
+            "radius": 15,
+            "material": "Liver"
+        },
+        {
+            "x": 305,
+            "y": 206,
+            "radius": 15,
+            "material": "50% CaCO3"
+        },
+        {
+            "x": 170,
+            "y": 248,
+            "radius": 15,
+            "material": "LN-350"
+        },
+        {
+            "x": 245,
+            "y": 256,
+            "radius": 15,
+            "material": "Cortical Bone"
+        },
+        {
+            "x": 322,
+            "y": 262,
+            "radius": 14,
+            "material": "LN-450"
+        },
+        {
+            "x": 243,
+            "y": 293,
+            "radius": 14,
+            "material": "Adipose"
+        },
+        {
+            "x": 187,
+            "y": 304,
+            "radius": 15,
+            "material": "30% CaCO3"
+        },
+        {
+            "x": 295,
+            "y": 315,
+            "radius": 16,
+            "material": "Brain"
+        },
+        {
+            "x": 238,
+            "y": 333,
+            "radius": 16,
+            "material": "Breast"
+        }
+   ]
 }
