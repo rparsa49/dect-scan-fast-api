@@ -687,10 +687,6 @@ def run_noise_benchmark(series_clean_path: str, model_name: str, method_fn: Call
 
 # HELPERS FOR NOISE BENCHMARKING
 def degrade_image(file: str | Path, out_dir: str | Path, var: float, original_dicom_data: FileDataset):
-    """
-    Read a DICOM, add Gaussian noise, and saves it as a DICOM:
-      out_dir / (stem + ".dcm")
-    """
     file = Path(file)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -773,10 +769,7 @@ def degrade_image(file: str | Path, out_dir: str | Path, var: float, original_di
 
 
 def process_upload(series_path: str, out_root: str):
-    """
-    Creates noisy duplicates of all DICOM files in the series_path
-    and saves them under the new folder structure in out_root.
-    """
+
     series_path = Path(series_path)
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -796,9 +789,7 @@ def process_upload(series_path: str, out_root: str):
             sample_dcm_path = root / dicom_files[0]
             dcm = pydicom.dcmread(str(sample_dcm_path))
             kvp = dcm.get("KVP")
-            # We assume the directory name is structured like {SeriesName}-{SliceThickness}-{KVP}
-            # We'll rely on the original folder structure for the prefix and thickness
-            # Example: "Head-5.0-70"
+
             series_name = root.name
             kvp_map[series_name] = dcm
         except Exception as e:
@@ -810,10 +801,9 @@ def process_upload(series_path: str, out_root: str):
         for filename in dicom_files:
             src_path = root / filename
             original_dcm_data = pydicom.dcmread(str(src_path))
-            series_name = root.name  # e.g. "Head-5.0-70"
+            series_name = root.name 
 
             for var in VAR:
-                # New folder name will be like: "degraded-Head-5.0-70-0.01"
                 subfolder_name = f"degraded-{series_name}-{var}"
                 out_dir = out_root / subfolder_name
                 out_dir.mkdir(parents=True, exist_ok=True)
@@ -822,11 +812,6 @@ def process_upload(series_path: str, out_root: str):
 
 
 def index_series_by_kvp(root: str | Path, noisy: bool = False) -> Dict[Tuple[Any, ...], Dict[int, Path]]:
-    '''
-    Walks root directory and returns:
-      {(prefix, thickness): {kvp: pathToSeries}}  for clean
-      {(prefix, thickness, noise): {kvp: pathToSeries}} for noisy
-    '''
     index = {}
     root = Path(root)
 
@@ -856,24 +841,15 @@ def index_series_by_kvp(root: str | Path, noisy: bool = False) -> Dict[Tuple[Any
 
 
 def get_sorted_dicoms(directory: Path) -> List[Path]:
-    """
-    Returns a sorted list of DICOM file paths in the given directory.
-    """
     return sorted([p for p in directory.glob("*.dcm") if p.is_file()])
 
 
 def run_methods(i: int, clean_high_file: Path, clean_low_file: Path, noisy_high_file: Path, noisy_low_file: Path, method_name: str, method_fn: Callable, prefix: str, thickness: str, kvp_low: int, kvp_high: int, noise_level: float, radii: float, phantom_type: str) -> List[Dict[str, Any]]:
-    """
-    Runs the specified decomposition method on both the clean and noisy DICOM pairs.
-    Returns a list of result dictionaries.
-    """
     result = []
     try:
         logger.info(
             f"  → Running {kvp_low}/{kvp_high} pair index {i} with {method_name}")
 
-        # Note: The decomposition methods (saito, hunemohr, tanaka) return a JSON string,
-        # which must be loaded back into a Python object here.
         clean_result_str = method_fn(
             str(clean_high_file), str(clean_low_file), phantom_type, radii)
         noisy_result_str = method_fn(
@@ -945,7 +921,6 @@ def _colorize_inside_masks_single(base_gray01: np.ndarray,
     H, W = base_gray01.shape
     base_rgb = np.stack([base_gray01]*3, axis=-1)
 
-    # Build used range (inserts + phantom)
     used = [float(spr_table.get(c["material"], 1.00)) for c in circles]
     used.append(float(spr_table.get(phantom_material, 1.00)))
     if spr_range is None:
@@ -958,13 +933,11 @@ def _colorize_inside_masks_single(base_gray01: np.ndarray,
     norm = Normalize(vmin=spr_min, vmax=spr_max)
     cmap = plt.get_cmap(cmap_name)
 
-    # Work in HSV to keep luminance from base but swap hue/sat by SPR
     hsv = cv2.cvtColor((base_rgb*255).astype(np.uint8),
                        cv2.COLOR_RGB2HSV).astype(np.float32)
     yy, xx = np.ogrid[:H, :W]
     circle_union = np.zeros((H, W), dtype=bool)
 
-    # Color inserts
     for c in circles:
         spr = float(spr_table.get(c["material"], 1.00))
         rgb = np.array(cmap(norm(spr))[:3], dtype=np.float32).reshape(1, 1, 3)
@@ -979,7 +952,6 @@ def _colorize_inside_masks_single(base_gray01: np.ndarray,
             cv2.circle(hsv, (c["x"], c["y"]), c["r"],
                        (h, 0, hsv[mask, 2].mean()), 1)
 
-    # Color phantom gray background (exclude black + inserts)
     phantom_mask = (base_gray01 > phantom_thresh) & (~circle_union)
     phantom_spr = float(spr_table.get(phantom_material, 1.00))
     phantom_rgb = np.array(cmap(norm(phantom_spr))[
@@ -990,31 +962,24 @@ def _colorize_inside_masks_single(base_gray01: np.ndarray,
     hsv[phantom_mask, 0] = phantom_h
     hsv[phantom_mask, 1] = saturation*255
 
-    # Convert back to RGB [0..1]
     colored = cv2.cvtColor(hsv.astype(np.uint8),
                            cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
     return colored, (spr_min, spr_max)
 
 
 def _save_rgb_png(rgb01: np.ndarray, save_path: str):
-    # rgb01 assumed in [0,1]
     plt.imsave(save_path, np.clip(rgb01, 0, 1))
     
 
 @app.post("/make-spr-map")
 async def make_spr_map(request: Request):
-    """
-    Create a single-image SPR map for display:
-    - Uses the DICOM behind the provided image_url
-    - Colors inserts + phantom gray background from provided spr_values (fallback to DEFAULT_SPR for missing)
-    """
     data = await request.json()
 
-    phantom = data.get("phantom")                     # "Head" or "Body"
-    which = data.get("which", "high").lower()         # "high" or "low"
+    phantom = data.get("phantom")                    
+    which = data.get("which", "high").lower()         
     image_url = data.get("image_url")
-    spr_values = data.get("spr_values", {})           # dict: material -> SPR
-    spr_range = data.get("spr_range")                 # [min, max] optional
+    spr_values = data.get("spr_values", {})           
+    spr_range = data.get("spr_range")                 
     cmap_name = data.get("cmap", "viridis")
     saturation = float(data.get("saturation", 0.95))
     draw_outline = bool(data.get("draw_outline", False))
@@ -1029,9 +994,7 @@ async def make_spr_map(request: Request):
         raise HTTPException(
             status_code=400, detail='Parameter "which" must be "high" or "low".')
 
-    # Build SPR table (calculated values override any defaults)
     spr_table = {}
-    # start empty; you could prefill with a default table if desired
     spr_table.update({})
     for k, v in spr_values.items():
         try:
@@ -1039,27 +1002,21 @@ async def make_spr_map(request: Request):
         except Exception:
             spr_table[str(k)] = 1.00
 
-    # Ensure phantom background has an SPR
     if phantom_material not in spr_table:
         spr_table[phantom_material] = float(
             spr_values.get(phantom_material, 1.00))
 
-    # Resolve DICOM path behind the chosen PNG URL
     dicom_path = convert_to_dicom_path(image_url, is_high=(which == "high"))
 
     try:
-        # 1) Load HU + compute display window
         hu, ds = _load_dicom_hu(dicom_path)
         vmin, vmax = _get_display_window(hu, ds)
         base01 = _apply_window_to_01(hu, vmin, vmax)
 
-        # 2) Get circle definitions for this phantom
         circles = CIRCLE_DATA[phantom]
         circles_norm = [{"x": int(c["x"]), "y": int(c["y"]), "r": int(
             c["radius"]), "material": str(c["material"])} for c in circles]
 
-        # 3) Colorize to produce single-image SPR map
-        # spr_range may be None or a pair [min, max]
         if spr_range is not None:
             try:
                 spr_range = (float(spr_range[0]), float(spr_range[1]))
@@ -1072,11 +1029,108 @@ async def make_spr_map(request: Request):
             draw_outline=draw_outline, phantom_material=phantom_material
         )
 
-        # 4) Save PNG in /processed_images and return URL
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_name = f"sprmap_{phantom}_{which}_{stamp}.png"
         out_path = os.path.join(IMAGES_DIR, out_name)
         _save_rgb_png(overlay_rgb, out_path)
+
+        return JSONResponse({
+            "spr_map": f"/processed_images/{out_name}",
+            "spr_minmax": {"min": used_range[0], "max": used_range[1]},
+            "cmap": cmap_name
+        })
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.exception("SPR map generation failed")
+        raise HTTPException(
+            status_code=500, detail=f"SPR map generation failed: {e}")
+
+@app.post("/make-spr-map-dicom")
+async def make_spr_map_dicom(request: Request):
+    data = await request.json()
+
+    phantom = data.get("phantom")
+    which = data.get("which", "high").lower()
+    image_url = data.get("image_url")
+    spr_values = data.get("spr_values", {})
+    spr_range = data.get("spr_range")
+    cmap_name = data.get("cmap", "viridis")
+    saturation = float(data.get("saturation", 0.95))
+    draw_outline = bool(data.get("draw_outline", False))
+    phantom_material = data.get("phantom_material", "Background")
+
+    if phantom not in CIRCLE_DATA:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid phantom type. Choose from: {list(CIRCLE_DATA.keys())}")
+    if not image_url:
+        raise HTTPException(status_code=400, detail="Missing image_url.")
+    if which not in ("high", "low"):
+        raise HTTPException(
+            status_code=400, detail='Parameter "which" must be "high" or "low".')
+
+    spr_table = {}
+    for k, v in spr_values.items():
+        try:
+            spr_table[str(k)] = float(v)
+        except Exception:
+            spr_table[str(k)] = 1.00
+
+    if phantom_material not in spr_table:
+        spr_table[phantom_material] = float(
+            spr_values.get(phantom_material, 1.00))
+
+    dicom_path = convert_to_dicom_path(image_url, is_high=(which == "high"))
+
+    try:
+        hu, ds = _load_dicom_hu(dicom_path)
+        vmin, vmax = _get_display_window(hu, ds)
+        base01 = _apply_window_to_01(hu, vmin, vmax)
+
+        circles = CIRCLE_DATA[phantom]
+        circles_norm = [{"x": int(c["x"]), "y": int(c["y"]), "r": int(
+            c["radius"]), "material": str(c["material"])} for c in circles]
+
+        if spr_range is not None:
+            try:
+                spr_range = (float(spr_range[0]), float(spr_range[1]))
+            except Exception:
+                spr_range = None
+
+        overlay_rgb, used_range = _colorize_inside_masks_single(
+            base01, circles_norm, spr_table, spr_range,
+            cmap_name=cmap_name, saturation=saturation,
+            draw_outline=draw_outline, phantom_material=phantom_material
+        )
+
+        overlay_rgb_uint8 = (overlay_rgb * 255).astype(np.uint8)
+
+        gray_image = np.dot(overlay_rgb_uint8[..., :3], [
+                            0.299, 0.587, 0.114]).astype(np.uint8)
+
+        new_ds = ds.clone() if hasattr(ds, "clone") else ds.copy()
+        new_ds.file_meta = ds.file_meta.copy()
+        new_ds.SOPInstanceUID = generate_uid()
+        new_ds.SeriesInstanceUID = generate_uid()
+        new_ds.SOPClassUID = pydicom.uid.SecondaryCaptureImageStorage
+        new_ds.Modality = "OT"  
+        new_ds.SeriesDescription = "SPR Map"
+        new_ds.Rows, new_ds.Columns = gray_image.shape
+        new_ds.PhotometricInterpretation = "MONOCHROME2"
+        new_ds.SamplesPerPixel = 1
+        new_ds.BitsAllocated = 8
+        new_ds.BitsStored = 8
+        new_ds.HighBit = 7
+        new_ds.PixelRepresentation = 0
+        new_ds.PixelData = gray_image.tobytes()
+        new_ds.is_little_endian = True
+        new_ds.is_implicit_VR = False
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_name = f"sprmap_{phantom}_{which}_{stamp}.dcm"
+        out_path = os.path.join(IMAGES_DIR, out_name)
+        new_ds.save_as(out_path)
 
         return JSONResponse({
             "spr_map": f"/processed_images/{out_name}",
