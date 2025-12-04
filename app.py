@@ -127,7 +127,7 @@ def identify_high_low_dirs(main_folder):
         return kvps[0][1], kvps[1][1], st[0]
 
     else:
-
+        raise ValueError("Upload must contain either one(SECT) or two(DECT) subfolders with DICOMs.")
 
 
 @app.post("/upload-scan")
