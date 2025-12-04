@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from methods.saito import saito, saito_test
 from methods.hunemohr import hunemohr, hunemohr_test
 from methods.tanaka import tanaka, tanaka_test
+from methods.schneider import schneider, test_schneider
 from dect_processing.dect import (save_dicom_as_png, process_and_save_circles)
 from dect_processing.organize import convert_numpy
 import shutil
@@ -44,7 +45,7 @@ IMAGES_DIR = "processed_images"
 DICOM_DIR = "uploaded_dicoms"
 BASE_DICOM_HIGH = ""
 BASE_DICOM_LOW = ""
-
+IS_SECT = False
 Path(IMAGES_DIR).mkdir(exist_ok=True)
 
 UPLOADED_DIR = ""
@@ -86,7 +87,8 @@ async def get_supported_models():
     models = {
         "tanaka": {"name": "Tanaka"},
         "saito": {"name": "Saito"},
-        "hunemohr": {"name": "Hunemohr"}
+        "hunemohr": {"name": "Hunemohr"},
+        "schneider": {"name": "Schneider"}
     }
     return JSONResponse(models)
 
@@ -105,7 +107,7 @@ def identify_high_low_dirs(main_folder):
         dcm = pydicom.dcmread(os.path.join(subdir, dcm_files[0]))
         st = dcm.get("SliceThickness", 1.0)
         # Return path, None for low, st
-        return subdir, None, st
+        return subdir, [], st
 
     elif len(subdirs) == 2:
         # Handle Dual Energy Case
@@ -152,38 +154,39 @@ async def upload_scan(files: List[UploadFile] = File(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    global BASE_DICOM_HIGH, BASE_DICOM_LOW, SLICE_THICKNESS, ROOT_PATH
+    global BASE_DICOM_HIGH, BASE_DICOM_LOW, SLICE_THICKNESS, ROOT_PATH, IS_SECT
     BASE_DICOM_HIGH = high_path
     BASE_DICOM_LOW = low_path
     SLICE_THICKNESS = st
     ROOT_PATH = session_folder
-
-    high_kvp_files = [str(p) for p in Path(high_path).glob("*dcm")]
-    low_kvp_files = [str(p) for p in Path(low_path).glob("*dcm")]
+    IS_SECT = (low_path is None)  # Set the flag based on identification
 
     high_kvp_image_paths = []
     low_kvp_image_paths = []
 
+    # Process High KVP (Always present)
+    high_kvp_files = [str(p) for p in Path(high_path).glob("*dcm")]
     for high_file in high_kvp_files:
         original_name = os.path.basename(high_file).replace(".dcm", ".png")
         high_img_path = os.path.join(IMAGES_DIR, original_name)
         save_dicom_as_png(high_file, high_img_path)
         high_kvp_image_paths.append(f"/get-image/{original_name}")
 
-    for low_file in low_kvp_files:
-        original_name = os.path.basename(low_file).replace(".dcm", ".png")
-        low_img_path = os.path.join(IMAGES_DIR, original_name)
-        save_dicom_as_png(low_file, low_img_path)
-        low_kvp_image_paths.append(f"/get-image/{original_name}")
+    # Process Low KVP (Only if DECT)
+    if not IS_SECT and low_path:
+        low_kvp_files = [str(p) for p in Path(low_path).glob("*dcm")]
+        for low_file in low_kvp_files:
+            original_name = os.path.basename(low_file).replace(".dcm", ".png")
+            low_img_path = os.path.join(IMAGES_DIR, original_name)
+            save_dicom_as_png(low_file, low_img_path)
+            low_kvp_image_paths.append(f"/get-image/{original_name}")
 
     return {
         "high_kvp_images": high_kvp_image_paths,
         "low_kvp_images": low_kvp_image_paths,
-        "slice_thickness": SLICE_THICKNESS
+        "slice_thickness": SLICE_THICKNESS,
+        "is_sect": IS_SECT
     }
-
-# NEW API to upload and process a calibration file
-
 
 @app.post("/upload-calibration")
 async def upload_calibration(calibration_file: UploadFile = File(...)):
@@ -202,8 +205,6 @@ async def upload_calibration(calibration_file: UploadFile = File(...)):
             status_code=500, detail=f"Error processing calibration file: {str(e)}")
 
 # Return image
-
-
 @app.get("/get-image/{image_name}")
 async def get_image(image_name: str):
     image_path = os.path.join(IMAGES_DIR, image_name)
@@ -254,15 +255,23 @@ async def update_circles(request: Request):
 
 def convert_to_dicom_path(image_url, is_high=True):
     filename = os.path.basename(image_url).replace(".png", ".dcm")
+
+    # Graceful handling for SECT
+    if not is_high and IS_SECT:
+        return None
+
     base_subfolder = BASE_DICOM_HIGH if is_high else BASE_DICOM_LOW
 
-    if not base_subfolder or not ROOT_PATH:
-        raise RuntimeError("BASE_DICOM paths or ROOT_PATH not set")
+    if not base_subfolder:
+        # If trying to access low folder but it doesn't exist
+        if not is_high:
+            return None
+        raise RuntimeError("BASE_DICOM paths not set properly.")
 
-    # Get only the final subfolder name, e.g., "SubfolderA"
+    if not ROOT_PATH:
+        raise RuntimeError("ROOT_PATH not set")
+
     subfolder_name = os.path.basename(base_subfolder)
-
-    # Now construct: processed_images/<main folder>/<subfolder>/<filename>
     full_path = os.path.join(ROOT_PATH, subfolder_name, filename)
 
     if not os.path.exists(full_path):
@@ -386,105 +395,90 @@ async def test_calibration(calibration_file: UploadFile = File(...), files: List
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    global BASE_DICOM_HIGH, BASE_DICOM_LOW, ROOT_PATH
+    global BASE_DICOM_HIGH, BASE_DICOM_LOW, ROOT_PATH, IS_SECT
     BASE_DICOM_HIGH = high_path
     BASE_DICOM_LOW = low_path
     ROOT_PATH = session_folder
-
-    high_kvp_files = [str(p) for p in Path(high_path).glob("*dcm")]
-    low_kvp_files = [str(p) for p in Path(low_path).glob("*dcm")]
+    IS_SECT = (low_path is None)
 
     high_kvp_image_paths = []
     low_kvp_image_paths = []
 
+    high_kvp_files = [str(p) for p in Path(high_path).glob("*dcm")]
     for high_file in high_kvp_files:
         original_name = os.path.basename(high_file).replace(".dcm", ".png")
         high_img_path = os.path.join(IMAGES_DIR, original_name)
         save_dicom_as_png(high_file, high_img_path)
         high_kvp_image_paths.append(f"/get-image/{original_name}")
 
-    for low_file in low_kvp_files:
-        original_name = os.path.basename(low_file).replace(".dcm", ".png")
-        low_img_path = os.path.join(IMAGES_DIR, original_name)
-        save_dicom_as_png(low_file, low_img_path)
-        low_kvp_image_paths.append(f"/get-image/{original_name}")
+    if not IS_SECT and low_path:
+        low_kvp_files = [str(p) for p in Path(low_path).glob("*dcm")]
+        for low_file in low_kvp_files:
+            original_name = os.path.basename(low_file).replace(".dcm", ".png")
+            low_img_path = os.path.join(IMAGES_DIR, original_name)
+            save_dicom_as_png(low_file, low_img_path)
+            low_kvp_image_paths.append(f"/get-image/{original_name}")
 
     # 3. Analyze inserts using the provided calibration data
     method_type = calibration_data.get("model")
 
-    test_methods = {
-        "Saito": saito_test,
-        "Hunemohr": hunemohr_test,
-        "Tanaka": tanaka_test,
-    }
-
-    if method_type not in test_methods:
-        raise HTTPException(
-            status_code=400, detail="Invalid method type in calibration file.")
-
-    # Using the first image pair for analysis as a default
+    # Pick first image for analysis
     high_dicom_path = convert_to_dicom_path(
         high_kvp_image_paths[0], is_high=True)
     low_dicom_path = convert_to_dicom_path(
-        low_kvp_image_paths[0], is_high=False)
-
-    # Safely extract and convert calibration parameters with default values
-    # The float() conversion will ensure a valid number is passed to the test function
-    params = {
-        "alpha": float(calibration_data.get("alpha", 0.0)),
-        "a": float(calibration_data.get("a", 0.0)),
-        "b": float(calibration_data.get("b", 0.0)),
-        "r": float(calibration_data.get("r", 0.0)),
-        "gamma": float(calibration_data.get("gamma", 0.0)),
-        "c": float(calibration_data.get("c", 0.0)),
-        "c0": float(calibration_data.get("c0", 0.0)),
-        "c1": float(calibration_data.get("c1", 0.0)),
-    }
+        low_kvp_image_paths[0], is_high=False) if not IS_SECT and low_path else None
 
     try:
+        # --- SCHNEIDER TEST LOGIC ---
+        if method_type == "Schneider":
+            ed_params = calibration_data.get("ed_params")
+            spr_params = calibration_data.get("spr_params")
+            phantom_used = calibration_data.get("phantom", "body")
+
+            # Default radius 100% if not specified
+            results_dict = test_schneider(
+                high_dicom_path, phantom_used, 1.0, ed_params, spr_params)
+
+            return JSONResponse({
+                "high_kvp_images": high_kvp_image_paths,
+                "low_kvp_images": low_kvp_image_paths,
+                "analysis_results": results_dict,
+                "model": model_name
+            })
+
+        # --- DECT TEST LOGIC ---
+
+        # Safely extract params
+        params = {
+            "alpha": float(calibration_data.get("alpha", 0.0)),
+            "a": float(calibration_data.get("a", 0.0)),
+            "b": float(calibration_data.get("b", 0.0)),
+            "r": float(calibration_data.get("r", 0.0)),
+            "gamma": float(calibration_data.get("gamma", 0.0)),
+            "c": float(calibration_data.get("c", 0.0)),
+            "c0": float(calibration_data.get("c0", 0.0)),
+            "c1": float(calibration_data.get("c1", 0.0)),
+        }
+
         if method_type == "Saito":
             analysis_result_str = saito_test(
-                high_dicom_path,
-                low_dicom_path,
-                "head",
-                1,
-                params["alpha"],
-                params["a"],
-                params["b"],
-                params["r"],
-                params["gamma"]
+                high_dicom_path, low_dicom_path, "head", 1,
+                params["alpha"], params["a"], params["b"], params["r"], params["gamma"]
             )
         elif method_type == "Hunemohr":
             analysis_result_str = hunemohr_test(
-                high_dicom_path,
-                low_dicom_path,
-                "head",
-                1,
-                params["a"],
-                params["b"],
-                params["c"]
+                high_dicom_path, low_dicom_path, "head", 1,
+                params["a"], params["b"], params["c"]
             )
         elif method_type == "Tanaka":
             analysis_result_str = tanaka_test(
-                high_dicom_path,
-                low_dicom_path,
-                "head",
-                1,
-                params["alpha"],
-                params["a"],
-                params["b"],
-                params["gamma"],
-                params["c0"],
-                params["c1"]
+                high_dicom_path, low_dicom_path, "head", 1,
+                params["alpha"], params["a"], params["b"], params["gamma"], params["c0"], params["c1"]
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid method type.")
 
         analysis_result = json.loads(analysis_result_str)
-
-        # The frontend expects a specific format, so we need to map the results
-        # from the test functions to the expected format.
-        processed_results = analysis_result["materials"]
 
         return JSONResponse({
             "high_kvp_images": high_kvp_image_paths,
@@ -494,14 +488,21 @@ async def test_calibration(calibration_file: UploadFile = File(...), files: List
         })
 
     except Exception as e:
+        logger.error(f"Error running test: {str(e)}")
         raise HTTPException(
             status_code=500, detail=f"Error running test: {str(e)}")
+
 
 @app.post("/analyze-inserts")
 async def analyze_inserts(request: Request):
     data = await request.json()
     radii_ratios = data.get("radius", [1.0])
-    radii_ratios = int(radii_ratios) / 100
+    # Frontend might send radius as "100" (percentage) or "1.0"
+    if radii_ratios and float(radii_ratios) > 5:
+        radii_ratios = float(radii_ratios) / 100
+    else:
+        radii_ratios = float(radii_ratios)
+
     phantom_type = data.get("phantom")
     method_type = data.get("model")
     high_path = data.get("high_kvp_image")
@@ -511,7 +512,38 @@ async def analyze_inserts(request: Request):
     logging.info(f"Low path is: {low_path}")
 
     high_name = convert_to_dicom_path(high_path, is_high=True)
-    low_name = convert_to_dicom_path(low_path, is_high=False)
+    low_name = convert_to_dicom_path(
+        low_path, is_high=False) if low_path else None
+
+    # --- SCHNEIDER CALIBRATION LOGIC ---
+    if method_type == "Schneider":
+        if not high_name:
+            raise HTTPException(
+                status_code=400, detail="High KVP image required for Schneider")
+
+        try:
+            # Run the training function to get params
+            ed_params, spr_params = schneider(
+                high_name, phantom_type, radii_ratios)
+
+            # Construct Calibration File Structure
+            calibration_data = {
+                "model": "Schneider",
+                "phantom": phantom_type,
+                "created_at": datetime.now().isoformat(),
+                "ed_params": ed_params,   # Already converted to list in schneider()
+                "spr_params": spr_params
+            }
+            # Return this JSON so the frontend can prompt user to save it
+            return JSONResponse(calibration_data)
+        except Exception as e:
+            logger.error(f"Schneider calibration failed: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Calibration failed: {e}")
+
+    # --- DECT METHODS LOGIC ---
+    if not high_name or not low_name:
+        return JSONResponse({"error": "Dual Energy models require both High and Low KVP images."}, status_code=400)
 
     if method_type == "Saito":
         results = saito(high_name, low_name, phantom_type, radii_ratios)
