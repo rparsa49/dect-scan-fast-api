@@ -91,32 +91,43 @@ async def get_supported_models():
     return JSONResponse(models)
 
 # Given a folder with two subfolders containing DICOM files, determine which one is the high KVP folder
-
-
 def identify_high_low_dirs(main_folder):
     subdirs = [os.path.join(main_folder, d) for d in os.listdir(
         main_folder) if os.path.isdir(os.path.join(main_folder, d))]
 
-    if len(subdirs) != 2:
-        raise ValueError(
-            "Upload must contain exactly two subfolders with DICOMs.")
-
-    kvps = []
-    st = []
-    for subdir in subdirs:
+    if len(subdirs) == 1:
+        # Handle Single Energy Case
+        subdir = subdirs[0]
         dcm_files = [f for f in os.listdir(
             subdir) if f.lower().endswith(".dcm")]
         if not dcm_files:
             raise ValueError(f"No DICOM files found in {subdir}")
         dcm = pydicom.dcmread(os.path.join(subdir, dcm_files[0]))
-        kvp = dcm.get("KVP")
-        st.append(dcm.get("SliceThickness"))
-        if kvp is None:
-            raise ValueError(f"No KVP in file {dcm_files[0]}")
-        kvps.append((kvp, subdir))
+        st = dcm.get("SliceThickness", 1.0)
+        # Return path, None for low, st
+        return subdir, None, st
 
-    kvps.sort(reverse=True)
-    return kvps[0][1], kvps[1][1], st[0]
+    elif len(subdirs) == 2:
+        # Handle Dual Energy Case
+        kvps = []
+        st = []
+        for subdir in subdirs:
+            dcm_files = [f for f in os.listdir(
+                subdir) if f.lower().endswith(".dcm")]
+            if not dcm_files:
+                raise ValueError(f"No DICOM files found in {subdir}")
+            dcm = pydicom.dcmread(os.path.join(subdir, dcm_files[0]))
+            kvp = dcm.get("KVP")
+            st.append(dcm.get("SliceThickness"))
+            if kvp is None:
+                raise ValueError(f"No KVP in file {dcm_files[0]}")
+            kvps.append((kvp, subdir))
+
+        kvps.sort(reverse=True)
+        return kvps[0][1], kvps[1][1], st[0]
+
+    else:
+
 
 
 @app.post("/upload-scan")
