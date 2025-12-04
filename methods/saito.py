@@ -460,38 +460,3 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
 
     # return results
     return json.dumps(results, indent=4)
-
-
-# body phantom (70/140) st = 0.6 NOT WORK R2Z = -0.56
-# low_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-70/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200010685.dcm"
-# high_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-140/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200014213.dcm"
-
-# gamma = 4.7412, RMSE for Z = 9.8, r2 for Z = -1.066
-# high_path = "/Users/royaparsa/Downloads/20240513/Body-Abdomen-0.6-140/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200014205.dcm"
-# low_path = "/Users/royaparsa/Downloads/20240513/Body-Abdomen-0.6-70/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200010668.dcm"
-
-# body phantom 80-100 st = 0.6 NOT WORK R2Z = -0.089
-# low_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-80/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200011576.dcm"
-# high_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-100/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200012476.dcm"
-
-# gamma = 9.99, RMSE for Z = 3.86, r2 for Z = 0.1885
-# low_path = "/Users/royaparsa/Downloads/20240513/Body-Abdomen-0.6-80/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200011603.dcm"
-# high_path = "/Users/royaparsa/Downloads/20240513/Body-Abdomen-0.6-100/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200012486.dcm"
-
-# head phantom (70/ 140) st = 3 NOT WORK R2Z = -0.62
-# low_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-70/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200019565.dcm"
-# high_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-140/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200021189.dcm"
-
-# works head phantom 80/100 st = 0.6
-# high_path = "/Users/royaparsa/Desktop/Head-0.6/Head-Abdomen-0.6-100/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020329.dcm"
-# low_path = "/Users/royaparsa/Desktop/Head-0.6/Head-Abdomen-0.6-80/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020022.dcm"
-
-# works head phantom (80/100) st = 3
-# high_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-100/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020560.dcm"
-# low_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-80/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200019893.dcm"
-
-# works (80/100) st = 3
-# high_path = "/Users/royaparsa/Downloads/test-data/high/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020533.dcm"
-# low_path = "/Users/royaparsa/Downloads/test-data/low/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020240.dcm"
-
-# saito(high_path, low_path, "Body", 1)
