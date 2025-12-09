@@ -9,7 +9,6 @@ from scipy.constants import physical_constants
 
 DATA_DIR = Path("data")
 
-# --- DATA LOADING HELPERS ---
 def load_json(file_name):
     path = DATA_DIR / file_name
     if not path.exists():
@@ -25,7 +24,6 @@ except Exception as e:
     print(f"Warning: Could not load JSON data in schneider.py: {e}")
     CIRCLE_DATA, MATERIAL_PROPERTIES, ELEMENTAL_PROPERTIES, ICRP_PROPERTIES = {}, {}, {}, {}
 
-# --- PHYSICS CALCULATIONS (Unchanged Logic) ---
 def compute_Ng(material, flag="Phantoms"):
     N_A = sp.constants.Avogadro
     composition = MATERIAL_PROPERTIES[material]["composition"] if flag == "Phantoms" else ICRP_PROPERTIES[material]["composition"]
@@ -39,8 +37,7 @@ def compute_Ng(material, flag="Phantoms"):
 def compute_weighted_Z(material, exponent, flag="Phantoms"):
     composition = MATERIAL_PROPERTIES[material]["composition"] if flag == "Phantoms" else ICRP_PROPERTIES[material]["composition"]
     sum_term = 0
-    N_g = compute_Ng(material) if flag == "Phantoms" else compute_Ng(
-        material, flag="ICRP")
+    N_g = compute_Ng(material) if flag == "Phantoms" else compute_Ng(material, flag="ICRP")
     N_A = sp.constants.Avogadro
     for element, weight_fraction in composition.items():
         Z_i = ELEMENTAL_PROPERTIES[element]["number"]
@@ -85,21 +82,17 @@ def calculate_mu(material, Kph, Kcoh, KKN):
     return rhoNg * (Kph * Zbar ** 3.62 + Kcoh * Zhat ** 1.86 + KKN)
 
 def hounsfield_schneider(mew, mew_w):
-    # Standard HU definition: 1000 * (mu - mu_w) / mu_w
     return ((mew / mew_w) - 1) * 1000
 
 def calculate_HU(tissues, Kph, Kcoh, KKN, flag="Phantoms"):
     mu_water = calculate_mu("True Water", Kph, Kcoh, KKN)
     res = []
     for tissue in tissues:
-        Ng = compute_Ng(tissue) if flag == "Phantoms" else compute_Ng(
-            tissue, "ICRP")
+        Ng = compute_Ng(tissue) if flag == "Phantoms" else compute_Ng(tissue, "ICRP")
         rho = MATERIAL_PROPERTIES[tissue]["density"] if flag == "Phantoms" else ICRP_PROPERTIES[tissue]["density"]
         rhoNg = (rho * Ng) / 1e23
-        Zbar = compute_weighted_Z(
-            tissue, 3.62) if flag == "Phantoms" else compute_weighted_Z(tissue, 3.62, "ICRP")
-        Zhat = compute_weighted_Z(
-            tissue, 1.86) if flag == "Phantoms" else compute_weighted_Z(tissue, 1.86, "ICRP")
+        Zbar = compute_weighted_Z(tissue, 3.62) if flag == "Phantoms" else compute_weighted_Z(tissue, 3.62, "ICRP")
+        Zhat = compute_weighted_Z(tissue, 1.86) if flag == "Phantoms" else compute_weighted_Z(tissue, 1.86, "ICRP")
         mu = rhoNg * (Kph * Zbar ** 3.62 + Kcoh * Zhat ** 1.86 + KKN)
         HU = hounsfield_schneider(mu, mu_water)
         res.append(HU)
@@ -133,7 +126,6 @@ def calculate_spr(rhoe, I, I_water=75):
         (I_water*(1 - beta) - beta)
     return rhoe * (numerator / denominator)
 
-# --- SEGMENTED MODEL LOGIC ---
 def linear_fit(x, m, c):
     return m * x + c
 
@@ -178,7 +170,6 @@ def predict_segmented(hu_val, params):
     else:
         return m_bone * hu_val + c_bone
 
-# --- MAIN EXPORTED FUNCTIONS ---
 def schneider(path, phantom_type, radii_ratio):
     """
     Generates calibration parameters using segmented fitting.
@@ -212,11 +203,9 @@ def schneider(path, phantom_type, radii_ratio):
             dicom_data.RescaleIntercept
         HU_List.append(hu)
 
-    # 2. Fit Scanner Physics (K parameters)
+    # 2. Fit K parameters
     rhoNg_list, Zbar_list, Zhat_list, mu_list = [], [], [], []
 
-    # We need an absolute mu for water to de-normalize HU
-    # Using theoretical mu for water at ~effective energy
     mu_water = linear_attenuation("True Water")
 
     for i, material in enumerate(materials_list):
@@ -229,7 +218,6 @@ def schneider(path, phantom_type, radii_ratio):
         measured_HU = HU_List[i]
 
         # Invert Standard HU to get mu
-        # HU = 1000 * (mu/mu_w - 1)  =>  mu = mu_w * (HU/1000 + 1)
         mu = mu_water * ((measured_HU / 1000.0) + 1.0)
 
         rhoNg_list.append(rhoNg)
@@ -245,18 +233,16 @@ def schneider(path, phantom_type, radii_ratio):
     bounds = ([0, 0, 0], [1e-3, 1e-2, 5])
 
     try:
-        popt, _ = curve_fit(mu_model_fit, X, y,
-                            p0=initial_guess, bounds=bounds)
+        popt, _ = curve_fit(mu_model_fit, X, y, p0=initial_guess, bounds=bounds)
         Kph, Kcoh, KKN = popt
         print(f"Fitted K-params: {popt}")
     except Exception as e:
         print(f"Curve fit failed, using defaults: {e}")
         Kph, Kcoh, KKN = 1e-5, 4e-4, 0.5
 
-    # 3. Simulate ICRP Tissues (Theoretical Data Generation)
+    # 3. Simulate ICRP Tissues
     ICRP_Tissues = list(ICRP_PROPERTIES.keys())
 
-    # These HUs are calculated using the Fitted K-params
     ICRP_HUs = calculate_HU(ICRP_Tissues, Kph, Kcoh, KKN, flag="ICRP")
 
     for material in ICRP_Tissues:
@@ -268,14 +254,13 @@ def schneider(path, phantom_type, radii_ratio):
         sprs.append(calculate_spr(rhoe, I))
 
     # 4. Generate SEGMENTED Calibration Curves
-    # Split point usually around 100 HU (separation of soft tissue / bone)
     split_hu = 100.0
 
     # Fit ED (Segmented Linear)
     ed_params = perform_segmented_fit(
         ICRP_HUs, rhos_ICRP, split_point=split_hu)
 
-    # Fit SPR (Segmented Linear - often better than single log for mixed ranges)
+    # Fit SPR (Segmented Linear)
     spr_params = perform_segmented_fit(ICRP_HUs, sprs, split_point=split_hu)
 
     return list(ed_params), list(spr_params)
@@ -306,18 +291,21 @@ def test_schneider(path, phantom_type, radii_ratio, ed_params, spr_params):
 
         pixel_values = image[mask == 1]
 
-        # IMPORTANT: Use Standard HU, do not normalize manually here
         raw_hu = np.mean(pixel_values) * \
             dicom_data.RescaleSlope + dicom_data.RescaleIntercept
 
         # Predict using Segmented Logic
         pred_rho = predict_segmented(raw_hu, ed_params)
         pred_spr = predict_segmented(raw_hu, spr_params)
+        
+        Zbar = compute_weighted_Z(material, 3.62)
+        # Zhat = compute_weighted_Z(material, 1.86)
 
         results["materials"][material] = {
             "mean_hu": float(raw_hu),
             "predicted_rho": float(pred_rho),
-            "predicted_spr": float(pred_spr)
+            "predicted_spr": float(pred_spr),
+            "z_eff": float(Zbar)
         }
 
     return results
