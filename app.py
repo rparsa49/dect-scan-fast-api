@@ -1053,7 +1053,6 @@ async def make_spr_map(request: Request):
             status_code=400, detail='Parameter "which" must be "high" or "low".')
 
     spr_table = {}
-    spr_table.update({})
     for k, v in spr_values.items():
         try:
             spr_table[str(k)] = float(v)
@@ -1064,37 +1063,81 @@ async def make_spr_map(request: Request):
         spr_table[phantom_material] = float(
             spr_values.get(phantom_material, 1.00))
 
-    dicom_path = convert_to_dicom_path(image_url, is_high=(which == "high"))
+    circles = CIRCLE_DATA[phantom]
+    circles_norm = [
+        {"x": int(c["x"]), "y": int(c["y"]), "r": int(
+            c["radius"]), "material": str(c["material"])}
+        for c in circles
+    ]
+
+    if spr_range is not None:
+        try:
+            spr_range = (float(spr_range[0]), float(spr_range[1]))
+        except Exception:
+            spr_range = None
 
     try:
-        hu, ds = _load_dicom_hu(dicom_path)
-        vmin, vmax = _get_display_window(hu, ds)
-        base01 = _apply_window_to_01(hu, vmin, vmax)
+        seed_dicom_path = convert_to_dicom_path(
+            image_url, is_high=(which == "high"))
 
-        circles = CIRCLE_DATA[phantom]
-        circles_norm = [{"x": int(c["x"]), "y": int(c["y"]), "r": int(
-            c["radius"]), "material": str(c["material"])} for c in circles]
+        dicom_dir = os.path.dirname(seed_dicom_path)
 
-        if spr_range is not None:
+        dicom_files = [
+            f for f in os.listdir(dicom_dir)
+            if f.lower().endswith(('.dcm', '.ima')) or "." not in f
+        ]
+
+        dicom_files.sort()
+
+        if not dicom_files:
+            raise HTTPException(
+                status_code=404, detail=f"No DICOM files found in directory: {dicom_dir}")
+
+        generated_maps = []
+        global_min = 1.0
+        global_max = 1.0
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        for i, filename in enumerate(dicom_files):
+            full_path = os.path.join(dicom_dir, filename)
+
             try:
-                spr_range = (float(spr_range[0]), float(spr_range[1]))
-            except Exception:
-                spr_range = None
+                hu, ds = _load_dicom_hu(full_path)
+                vmin, vmax = _get_display_window(hu, ds)
+                base01 = _apply_window_to_01(hu, vmin, vmax)
 
-        overlay_rgb, used_range = _colorize_inside_masks_single(
-            base01, circles_norm, spr_table, spr_range,
-            cmap_name=cmap_name, saturation=saturation,
-            draw_outline=draw_outline, phantom_material=phantom_material
-        )
+                overlay_rgb, used_range = _colorize_inside_masks_single(
+                    base01, circles_norm, spr_table, spr_range,
+                    cmap_name=cmap_name, saturation=saturation,
+                    draw_outline=draw_outline, phantom_material=phantom_material
+                )
 
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_name = f"sprmap_{phantom}_{which}_{stamp}.png"
-        out_path = os.path.join(IMAGES_DIR, out_name)
-        _save_rgb_png(overlay_rgb, out_path)
+                if i == 0:
+                    global_min, global_max = used_range
+                else:
+                    global_min = min(global_min, used_range[0])
+                    global_max = max(global_max, used_range[1])
+
+                safe_fname = os.path.splitext(filename)[0]
+                out_name = f"sprmap_{phantom}_{which}_{timestamp}_{safe_fname}.png"
+                out_path = os.path.join(IMAGES_DIR, out_name)
+
+                _save_rgb_png(overlay_rgb, out_path)
+                generated_maps.append(f"/processed_images/{out_name}")
+
+            except Exception as e:
+                logger.warning(f"Failed to process slice {filename}: {e}")
+                continue
+
+        if not generated_maps:
+            raise HTTPException(
+                status_code=500, detail="Failed to generate maps for any images in the set.")
 
         return JSONResponse({
-            "spr_map": f"/processed_images/{out_name}",
-            "spr_minmax": {"min": used_range[0], "max": used_range[1]},
+            "spr_maps": generated_maps, 
+            "count": len(generated_maps),
+            "spr_minmax": {"min": global_min, "max": global_max},
             "cmap": cmap_name
         })
 
