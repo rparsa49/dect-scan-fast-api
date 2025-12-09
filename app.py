@@ -94,23 +94,12 @@ async def get_supported_models():
 
 # Given a folder with two subfolders containing DICOM files, determine which one is the high KVP folder
 def identify_high_low_dirs(main_folder):
+    # Get all subdirectories
     subdirs = [os.path.join(main_folder, d) for d in os.listdir(
         main_folder) if os.path.isdir(os.path.join(main_folder, d))]
 
-    if len(subdirs) == 1:
-        # Handle Single Energy Case
-        subdir = subdirs[0]
-        dcm_files = [f for f in os.listdir(
-            subdir) if f.lower().endswith(".dcm")]
-        if not dcm_files:
-            raise ValueError(f"No DICOM files found in {subdir}")
-        dcm = pydicom.dcmread(os.path.join(subdir, dcm_files[0]))
-        st = dcm.get("SliceThickness", 1.0)
-        # Return path, None for low, st
-        return subdir, [], st
-
-    elif len(subdirs) == 2:
-        # Handle Dual Energy Case
+    # CASE 1: Dual Energy (DECT) - Two subfolders
+    if len(subdirs) == 2:
         kvps = []
         st = []
         for subdir in subdirs:
@@ -128,8 +117,33 @@ def identify_high_low_dirs(main_folder):
         kvps.sort(reverse=True)
         return kvps[0][1], kvps[1][1], st[0]
 
-    else:
-        raise ValueError("Upload must contain either one(SECT) or two(DECT) subfolders with DICOMs.")
+    # CASE 2: Single Energy (SECT) - One subfolder
+    elif len(subdirs) == 1:
+        subdir = subdirs[0]
+        dcm_files = [f for f in os.listdir(
+            subdir) if f.lower().endswith(".dcm")]
+        if not dcm_files:
+            # If the subdir is empty, check if the files are actually in the root
+            pass
+        else:
+            dcm = pydicom.dcmread(os.path.join(subdir, dcm_files[0]))
+            st = dcm.get("SliceThickness", 1.0)
+            return subdir, [], st
+
+    # CASE 3: Single Energy (SECT) - Files in root folder (No subfolders)
+    # Check if there are DICOMs directly in the main_folder
+    root_dcm_files = [f for f in os.listdir(
+        main_folder) if f.lower().endswith(".dcm")]
+
+    if len(root_dcm_files) > 0:
+        dcm = pydicom.dcmread(os.path.join(main_folder, root_dcm_files[0]))
+        st = dcm.get("SliceThickness", 1.0)
+        # Return main_folder as the high path, empty list for low, and thickness
+        return main_folder, [], st
+
+    # CASE 4: Invalid Structure
+    raise ValueError(
+        "Upload must contain either DICOM files in the root (SECT), one subfolder (SECT), or two subfolders (DECT).")
 
 
 @app.post("/upload-scan")
@@ -188,6 +202,7 @@ async def upload_scan(files: List[UploadFile] = File(...)):
         "is_sect": IS_SECT
     }
 
+
 @app.post("/upload-calibration")
 async def upload_calibration(calibration_file: UploadFile = File(...)):
     if not calibration_file.filename.endswith(".json"):
@@ -205,6 +220,8 @@ async def upload_calibration(calibration_file: UploadFile = File(...)):
             status_code=500, detail=f"Error processing calibration file: {str(e)}")
 
 # Return image
+
+
 @app.get("/get-image/{image_name}")
 async def get_image(image_name: str):
     image_path = os.path.join(IMAGES_DIR, image_name)
@@ -497,11 +514,7 @@ async def test_calibration(calibration_file: UploadFile = File(...), files: List
 async def analyze_inserts(request: Request):
     data = await request.json()
     radii_ratios = data.get("radius", [1.0])
-    # Frontend might send radius as "100" (percentage) or "1.0"
-    if radii_ratios and float(radii_ratios) > 5:
-        radii_ratios = float(radii_ratios) / 100
-    else:
-        radii_ratios = float(radii_ratios)
+    radii_ratios = float(radii_ratios)
 
     phantom_type = data.get("phantom")
     method_type = data.get("model")
@@ -531,7 +544,7 @@ async def analyze_inserts(request: Request):
                 "model": "Schneider",
                 "phantom": phantom_type,
                 "created_at": datetime.now().isoformat(),
-                "ed_params": ed_params,   # Already converted to list in schneider()
+                "ed_params": ed_params,
                 "spr_params": spr_params
             }
             # Return this JSON so the frontend can prompt user to save it
@@ -559,6 +572,7 @@ async def analyze_inserts(request: Request):
 
     return JSONResponse({"results": {k: convert_numpy(v) for k, v in results.items()}})
 
+
 @app.post("/go-back")
 async def go_back(request: Request):
     # Check if directory exists
@@ -576,6 +590,7 @@ async def go_back(request: Request):
 
     return {"message": "Processed images directory cleaned successfully"}
 
+
 @app.post("/reset-processed")
 async def reset_processed_folder():
     try:
@@ -591,6 +606,8 @@ async def reset_processed_folder():
             status_code=500, detail=f"Error clearing folder: {str(e)}")
 
 # api for benchmarking tests
+
+
 @app.post("/benchmark-noise")
 async def benchmark_noise(request: Request):
     data = await request.json()
@@ -812,7 +829,6 @@ def degrade_image(file: str | Path, out_dir: str | Path, var: float, original_di
 
 
 def process_upload(series_path: str, out_root: str):
-
     series_path = Path(series_path)
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -844,7 +860,7 @@ def process_upload(series_path: str, out_root: str):
         for filename in dicom_files:
             src_path = root / filename
             original_dcm_data = pydicom.dcmread(str(src_path))
-            series_name = root.name 
+            series_name = root.name
 
             for var in VAR:
                 subfolder_name = f"degraded-{series_name}-{var}"
@@ -1012,17 +1028,16 @@ def _colorize_inside_masks_single(base_gray01: np.ndarray,
 
 def _save_rgb_png(rgb01: np.ndarray, save_path: str):
     plt.imsave(save_path, np.clip(rgb01, 0, 1))
-    
 
 @app.post("/make-spr-map")
 async def make_spr_map(request: Request):
     data = await request.json()
 
-    phantom = data.get("phantom")                    
-    which = data.get("which", "high").lower()         
+    phantom = data.get("phantom")
+    which = data.get("which", "high").lower()
     image_url = data.get("image_url")
-    spr_values = data.get("spr_values", {})           
-    spr_range = data.get("spr_range")                 
+    spr_values = data.get("spr_values", {})
+    spr_range = data.get("spr_range")
     cmap_name = data.get("cmap", "viridis")
     saturation = float(data.get("saturation", 0.95))
     draw_outline = bool(data.get("draw_outline", False))
@@ -1089,6 +1104,7 @@ async def make_spr_map(request: Request):
         logger.exception("SPR map generation failed")
         raise HTTPException(
             status_code=500, detail=f"SPR map generation failed: {e}")
+
 
 @app.post("/make-spr-map-dicom")
 async def make_spr_map_dicom(request: Request):
@@ -1157,7 +1173,7 @@ async def make_spr_map_dicom(request: Request):
         new_ds.SOPInstanceUID = generate_uid()
         new_ds.SeriesInstanceUID = generate_uid()
         new_ds.SOPClassUID = pydicom.uid.SecondaryCaptureImageStorage
-        new_ds.Modality = "OT"  
+        new_ds.Modality = "OT"
         new_ds.SeriesDescription = "SPR Map"
         new_ds.Rows, new_ds.Columns = gray_image.shape
         new_ds.PhotometricInterpretation = "MONOCHROME2"
