@@ -8,14 +8,11 @@ from scipy.constants import physical_constants
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.linear_model import LinearRegression
 
-
 DATA_DIR = Path("data")
-
 
 def load_json(file_name):
     with open(DATA_DIR / file_name, "r") as file:
         return json.load(file)
-
 
 WATER_SPR = load_json("water_sp.json")
 CIRCLE_DATA = load_json("circles.json")
@@ -24,12 +21,9 @@ ATOMIC_NUMBERS = load_json("atomic_numbers.json")
 ELEMENTAL_PROPERTIES = load_json("element_properties.json")
 
 # True electron densities and Zeffs for materials
-TRUE_RHO = {mat: MATERIAL_PROPERTIES[mat]
-            ["rho_e_w"]for mat in MATERIAL_PROPERTIES}
+TRUE_RHO = {mat: MATERIAL_PROPERTIES[mat]["rho_e_w"]for mat in MATERIAL_PROPERTIES}
 RHO_W = 3.342801000466205e+23
-TRUE_ZEFF = {mat: MATERIAL_PROPERTIES[mat]
-             ["Z_eff"]for mat in MATERIAL_PROPERTIES}
-
+TRUE_ZEFF = {mat: MATERIAL_PROPERTIES[mat]["Z_eff"]for mat in MATERIAL_PROPERTIES}
 
 def delta_HU(alpha, high, low):
     '''
@@ -42,7 +36,6 @@ def delta_HU(alpha, high, low):
     '''
     return (1+alpha)*high-(alpha*low)
 
-
 def rho_e_saito(HU, a, b):
     '''
     Saito 2012
@@ -54,10 +47,8 @@ def rho_e_saito(HU, a, b):
     '''
     return a*(HU/1000)+b
 
-
 def rho_e(HU):
     return HU / 1000 + 1
-
 
 def reduce_ct(HU):
     '''
@@ -69,8 +60,6 @@ def reduce_ct(HU):
     return HU/1000 + 1
 
 # Calculate Reference Zs (Eq. 10)
-
-
 def saito_reference_z(mat):
     composition = MATERIAL_PROPERTIES[mat]["composition"]
 
@@ -79,27 +68,20 @@ def saito_reference_z(mat):
     atomic_numbers = np.array([ATOMIC_NUMBERS[el] for el in elements])
     return z_eff_saito(fractions, atomic_numbers, 3.1)
 
-
 def z_eff_saito(n_i, Z_i, n):
     num = np.sum(n_i * (Z_i ** (n + 1)))
     den = np.sum(n_i * Z_i)
     return (num / den) ** (1 / n)
 
 # Saito 2017a Eq. 8 - LHS
-
-
 def zeff_lhs(zeff):
     return ((zeff / 7.45) ** 3.3) - 1
 
 # Saito 2017a Eq. 8 - RHS
-
-
 def zeff_rhs(gamma, ct, rho):
     return gamma * ((ct/rho) - 1)
 
 # Tanaka 2020 Eq. 1 - Stopping Power
-
-
 def spr_tanaka(rho, I, beta):
     '''
     rho: electron density ratio to water
@@ -117,11 +99,8 @@ def spr_tanaka(rho, I, beta):
     return rho * (1 - (term1 / (term2 - beta ** 2)))
 
 # True Mean Excitation Energy (Courtesy of Milo V.)
-
-
 def i_truth(weight_fractions, Num, A, I):
     return sum(weight_fractions * Num / A * np.log(I)) / sum(weight_fractions * Num / A)
-
 
 def beta(kvp):
     kinetic_energy_mev = kvp / 1000
@@ -130,21 +109,17 @@ def beta(kvp):
     return np.sqrt(1 - (1 / gamma ** 2))
 
 # Get I_material from ln I / Iw
-
-
 def get_I(mean_exciation):
     return 75 * (np.e ** mean_exciation)
 
 # Fitting functions
-
-
 def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
-    best_r2 = 0
-    best_alpha = None
+    best_r2 = -np.inf
+    best_alpha = 0.5
     best_a = None
     best_b = None
 
-    alphas = np.linspace(0, 1, 10000)  # Fine granularity
+    alphas = np.linspace(0, 1, 10000)
 
     for alpha in alphas:
         true_rhos = []
@@ -153,8 +128,8 @@ def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
         for HU_H, HU_L, material in zip(HU_H_LIST, HU_L_LIST, materials_list):
             if material in true_rho_list:
                 delta = delta_HU(alpha, HU_H, HU_L)
-                deltas.append(delta / 1000)  # acts as x
-                true_rhos.append(true_rho_list[material])  # acts as y
+                deltas.append(delta / 1000) 
+                true_rhos.append(true_rho_list[material]) 
 
         # Linear fit: rho_e_cal = a * (delta_HU / 1000) + b
         x = np.array(deltas).reshape(-1, 1)
@@ -172,8 +147,6 @@ def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
     return best_alpha, best_a, best_b, best_r2
 
 # Eq. 8
-
-
 def optimize_gamma(zeff_list, ct_list, rho_list):
     def objective(gamma):
         errors = []
@@ -186,9 +159,7 @@ def optimize_gamma(zeff_list, ct_list, rho_list):
     result = minimize_scalar(objective, bounds=(0, 10), method="bounded")
     return result.x
 
-
 def saito_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, r, gamma):
-
     dicom_data_h = pydicom.dcmread(high_path)
     dicom_data_l = pydicom.dcmread(low_path)
 
@@ -203,7 +174,7 @@ def saito_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, r, 
     saved_circles = CIRCLE_DATA[phantom_type]
 
     for circle in saved_circles:
-        x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
+        x, y, radius, material = int(circle["x"]), int(circle["y"]), circle["radius"], circle["material"]
         if material not in TRUE_RHO or material in materials_list:
             continue
 
@@ -211,8 +182,7 @@ def saito_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, r, 
             materials_list.append(material)
             # Mask for circular region
             mask = np.zeros(high_image.shape, dtype=np.uint8)
-            cv2.circle(mask, (x, y), int(
-                radius * radii_ratios), 1, thickness=-1)
+            cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
             high_pixel_values = high_image[mask == 1]
             low_pixel_values = low_image[mask == 1]
@@ -246,18 +216,10 @@ def saito_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, r, 
     reduced_ct = [reduce_ct(hl) for hl in HU_L_List]
 
     # Step 5: Calculate estimated Zeff
-    calculated_zeffs = [(zeff_rhs(gamma, ct, rho) + 1) ** (1/3.3)
-                        * 7.45 for ct, rho in zip(reduced_ct, calculated_rhos)]
+    calculated_zeffs = [(zeff_rhs(gamma, ct, rho) + 1) ** (1/3.3)* 7.45 for ct, rho in zip(reduced_ct, calculated_rhos)]
 
     for mat, z in zip(materials_list, calculated_zeffs):
         print(f"Material: {mat}'s calculated Z: {z}")
-
-    calculated_zeffs = [(zeff_rhs(gamma, ct, rho) + 1) ** (1/3.3)
-                        * 7.45 for ct, rho in zip(reduced_ct, calculated_rhos)]
-
-    for mat, z in zip(materials_list, calculated_zeffs):
-        print(
-            f"Material: {mat}'s calculated Z: {z} and true Z: {MATERIAL_PROPERTIES[mat]['Z_eff']}")
 
     # Step 6: Calculate Mean Excitation Energy
     for mat in materials_list:
@@ -317,7 +279,6 @@ def saito_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, r, 
     # return results
     return json.dumps(results, indent=4)
 
-
 def saito(high_path, low_path, phantom_type, radii_ratios):
     dicom_data_h = pydicom.dcmread(high_path)
     dicom_data_l = pydicom.dcmread(low_path)
@@ -334,7 +295,7 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     saved_circles = CIRCLE_DATA[phantom_type]
 
     for circle in saved_circles:
-        x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
+        x, y, radius, material = int(circle["x"]), int(circle["y"]), circle["radius"], circle["material"]
         if material not in TRUE_RHO or material in materials_list:
             continue
 
@@ -342,16 +303,13 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
             materials_list.append(material)
             # Mask for circular region
             mask = np.zeros(high_image.shape, dtype=np.uint8)
-            cv2.circle(mask, (x, y), int(
-                radius * radii_ratios), 1, thickness=-1)
+            cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
             high_pixel_values = high_image[mask == 1]
             low_pixel_values = low_image[mask == 1]
 
-            mean_high_hu = np.mean(
-                dicom_data_h.RescaleSlope * high_pixel_values) + dicom_data_h.RescaleIntercept
-            mean_low_hu = np.mean(
-                dicom_data_l.RescaleSlope * low_pixel_values) + dicom_data_l.RescaleIntercept
+            mean_high_hu = np.mean(dicom_data_h.RescaleSlope * high_pixel_values) + dicom_data_h.RescaleIntercept
+            mean_low_hu = np.mean(dicom_data_l.RescaleSlope * low_pixel_values) + dicom_data_l.RescaleIntercept
 
             # Create HU lists
             HU_H_List.append(mean_high_hu)
@@ -385,18 +343,10 @@ def saito(high_path, low_path, phantom_type, radii_ratios):
     print(f"\nGamma is {gamma}\n")
 
     # Step 5: Calculate estimated Zeff
-    calculated_zeffs = [(zeff_rhs(gamma, ct, rho) + 1) ** (1/3.3)
-                        * 7.45 for ct, rho in zip(reduced_ct, calculated_rhos)]
+    calculated_zeffs = [(zeff_rhs(gamma, ct, rho) + 1) ** (1/3.3)* 7.45 for ct, rho in zip(reduced_ct, calculated_rhos)]
 
     for mat, z in zip(materials_list, calculated_zeffs):
         print(f"Material: {mat}'s calculated Z: {z}")
-
-    calculated_zeffs = [(zeff_rhs(gamma, ct, rho) + 1) ** (1/3.3)
-                        * 7.45 for ct, rho in zip(reduced_ct, calculated_rhos)]
-
-    for mat, z in zip(materials_list, calculated_zeffs):
-        print(
-            f"Material: {mat}'s calculated Z: {z} and true Z: {MATERIAL_PROPERTIES[mat]['Z_eff']}")
 
     # Step 6: Calculate Mean Excitation Energy
     for mat in materials_list:
