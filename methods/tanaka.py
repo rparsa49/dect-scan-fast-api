@@ -3,7 +3,7 @@ import pydicom
 import cv2
 import json
 import numpy as np
-from scipy.optimize import minimize_scalar, minimize
+from scipy.optimize import minimize_scalar
 from pathlib import Path
 from scipy.constants import physical_constants
 from sklearn.metrics import mean_squared_error, r2_score
@@ -34,70 +34,48 @@ TRUE_ZEFF = {mat: MATERIAL_PROPERTIES[mat]["Z_eff"]
              for mat in MATERIAL_PROPERTIES}
 
 # Saito 2017a Eq. 1 - Calculate delta_HU
-
-
 def delta_HU(alpha, HU_H, HU_L):
     return (1 + alpha) * HU_H - (alpha * HU_L)
 
 # Saito 2017a Eq. 2 - Calculate electron density relative to water
-
-
 def rho_e(delta_HU):
     return delta_HU / 1000 + 1
 
 # Saito 2012 Eq. 4 - Calculate electron density with parameter fit
-
-
 def rho_e_calc(delta_HU, a, b):
     return (a * (delta_HU / 1000) + b)
 
 # Saito 2017a Eq. 4 - Reduced CT number
-
-
 def reduce_ct(HU):
     return HU/1000 + 1
 
 # Saito 2017a Eq. 8 - LHS
-
-
 def zeff_lhs(zeff):
     return ((zeff / 7.45) ** 3.3) - 1
 
 # Saito 2017a Eq. 8 - RHS
-
-
 def zeff_rhs(gamma, ct, rho):
     return gamma * ((ct/rho) - 1)
 
 # Hunemohr 2014 Eq. 21 - Effective Atomic Number
-
-
 def zeff_hunemohr(n_i, Z_i, n=3.1):
     num = np.sum(n_i * (Z_i ** (n + 1)))
     den = np.sum(n_i * Z_i)
     return (num / den) ** (1 / n)
 
 # True Mean Excitation Energy (Courtesy of Milo V.)
-
-
 def i_truth(weight_fractions, Num, A, I):
     return sum(weight_fractions * Num / A * np.log(I)) / sum(weight_fractions * Num / A)
 
 # Tanaka 2020 Eq. 6 - Mean Excitation Energy
-
-
 def i_tanaka(z_ratio, c0, c1):
     return c1 * (z_ratio - 1) - c0
 
 # Get I_material from ln I / Iw
-
-
 def get_I(mean_exciation):
     return 75 * (np.e ** mean_exciation)
 
 # Beta Proton (Courtesy of Milo)
-
-
 def beta(kvp):
     kinetic_energy_mev = kvp / 1000
     proton_mass_mev = physical_constants['proton mass energy equivalent in MeV'][0]
@@ -105,8 +83,6 @@ def beta(kvp):
     return np.sqrt(1 - (1 / gamma ** 2))
 
 # Tanaka 2020 Eq. 1 - Stopping Power
-
-
 def spr_tanaka(rho, I, beta):
     '''
     rho: electron density ratio to water
@@ -124,11 +100,9 @@ def spr_tanaka(rho, I, beta):
     return rho * (1 - (term1 / (term2 - beta ** 2)))
 
 # Optimize alpha to match true electron density using Saito 2017a eq. 1 and eq. 2
-
-
 def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
-    best_r2 = 0
-    best_alpha = None
+    best_r2 = -np.inf
+    best_alpha = 0.5
     best_a = None
     best_b = None
 
@@ -161,8 +135,6 @@ def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
     return best_alpha, best_a, best_b, best_r2
 
 # Calculate Z_eff using Hunemohr 2014 eq. 21
-
-
 def calculate_z_eff_hunemohr(material):
     composition = MATERIAL_PROPERTIES[material]["composition"]
 
@@ -202,8 +174,6 @@ def calculate_zeff_optimized(rho_e, zeff_w, x1, x2, d_e, n=3.1):
     return inner ** (1/n)
 
 # Optimize gamma to match true effective atomic number using Saito 2017a eq. 8
-
-
 def calculate_optimized_gamma(ct_list, rho_list, z_eff_list):
     def objective(gamma):
         errors = [(zeff_lhs(z) - zeff_rhs(gamma, ct, rho)) **
@@ -214,8 +184,6 @@ def calculate_optimized_gamma(ct_list, rho_list, z_eff_list):
     return result.x
 
 # Minimize the difference between calculated and true Z_eff
-
-
 def optimize_n_for_hunemohr(fractions, atomic_numbers, true_z_eff):
     def objective(n):
         calculated_z_eff = zeff_hunemohr(fractions, atomic_numbers, n)
@@ -239,8 +207,6 @@ def calculate_optimized_z_eff_hunemohr(material, true_z_eff_list):
     return z_eff
 
 # Optimize c0 and c1 to match the true mean excitation energies
-
-
 def optimize_c(ionization_list, z_ratio_list):
     z_ratio_array = np.array(z_ratio_list)
     ionization_array = np.array(ionization_list)
@@ -248,20 +214,8 @@ def optimize_c(ionization_list, z_ratio_list):
     popt, _ = curve_fit(i_tanaka, z_ratio_array,
                         ionization_array, p0=[100, 50])
     return popt
-    # def objective(params):
-    #     c0, c1 = params
-    #     for i, z in zip(ionization_list, z_ratio_list):
-    #         calc_i_list = [i_tanaka(z, c0, c1)]
-    #         vals = [(calc_i - i) ** 2 for calc_i in calc_i_list]
-    #         return sum(vals)
-
-    # initial_guess = [100, 50]
-    # result = minimize(objective, initial_guess, method = 'Nelder-Mead')
-    # return result.x
 
 # Get SPR from Tanaka
-
-
 def get_t_spr(material):
     if material == 'Lung':
         return 0.280
@@ -313,20 +267,19 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
 
     calculated_rhos = []
     calculated_z_effs = []
-    true_z_ratios, calculated_z_ratios = [], []
+    calculated_z_ratios = []
     optimized_zs = []
     true_mean_excitation, calculated_mean_excitation = [], []
     sprs = []
     t_sprs = []
 
-    reduced_cts = []
 
-    HU_H_List, HU_L_List, delta_HU_list = [], [], []
+    HU_H_List, HU_L_List = [], []
 
     for circle in saved_circles:
         x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
 
-        if material not in TRUE_RHO or material == '50% CaCO3' or material == '30% CaCO3':
+        if material not in TRUE_RHO:
             # print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
 
@@ -334,7 +287,7 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
 
         # Mask for circular region
         mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
         high_pixel_values = high_image[mask == 1]
         low_pixel_values = low_image[mask == 1]
@@ -349,8 +302,6 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
         HU_L_List.append(mean_low_hu)
 
     # Step 1: Get optimized alpha
-    # print(f"Alpha: {alpha}\n a: {a}\n b: {b}\n r: {r}\n")
-
     deltas = []
     for HU_H, HU_L in zip(HU_H_List, HU_L_List):
         delta = ((1 + alpha) * HU_H) - (alpha * HU_L)
@@ -361,8 +312,6 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
         rho = rho_e_calc(delta, a, b)
         calculated_rhos.append(rho)
 
-    # for mat, rho in zip(materials_list, calculated_rhos):
-    #     print(f"Material: {mat} with electron density of {rho}")
 
     # Step 3: Calculate reduced CT
     reduced_ct = [reduce_ct(hl) for hl in HU_L_List]
@@ -406,17 +355,10 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
                     atomic_masses, ionization_energies)
         true_mean_excitation.append(i)
 
-    # print(f"True I: {true_mean_excitation}")
-    # print(f"Calculated Zs: {calculated_z_ratios}")
-
-    # Step 6: Optimize c0 and c1 for mean excitation energy using Tanaka 2020 eq. 6
-    # print(f"C0: {c0} \nC1: {c1}")
-
     for z_ratio in calculated_z_ratios:
         i_tanaka_val = i_tanaka(z_ratio, c0, c1)
         calculated_mean_excitation.append(i_tanaka_val)
 
-    # print(f"Tanaka I: {calculated_mean_excitation}")
     # Step 7: Calculate stopping power
     for t, rho, mat in zip(calculated_mean_excitation, calculated_rhos, materials_list):
         I = get_I(t)
@@ -457,7 +399,6 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
 
     return json.dumps(results, indent=4)
 
-
 def tanaka(high_path, low_path, phantom_type, radii_ratios):
     dicom_data_h = pydicom.dcmread(high_path)
     dicom_data_l = pydicom.dcmread(low_path)
@@ -471,13 +412,11 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
 
     calculated_rhos = []
     calculated_z_effs = []
-    true_z_ratios, calculated_z_ratios = [], []
+    calculated_z_ratios = []
     optimized_zs = []
     true_mean_excitation, calculated_mean_excitation = [], []
     sprs = []
     t_sprs = []
-
-    reduced_cts = []
 
     alpha = 0
     a = 0
@@ -485,12 +424,12 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     gamma = 0
     c0, c1 = 0, 0
 
-    HU_H_List, HU_L_List, delta_HU_list = [], [], []
+    HU_H_List, HU_L_List = [], []
 
     for circle in saved_circles:
         x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
 
-        if material not in TRUE_RHO or material == '50% CaCO3' or material == '30% CaCO3':
+        if material not in TRUE_RHO:
             # print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
 
@@ -498,7 +437,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
 
         # Mask for circular region
         mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
         high_pixel_values = high_image[mask == 1]
         low_pixel_values = low_image[mask == 1]
@@ -526,9 +465,6 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     for delta in deltas:
         rho = rho_e_calc(delta, a, b)
         calculated_rhos.append(rho)
-
-    # for mat, rho in zip(materials_list, calculated_rhos):
-    #     print(f"Material: {mat} with electron density of {rho}")
 
     # Step 3: Calculate reduced CT
     reduced_ct = [reduce_ct(hl) for hl in HU_L_List]
@@ -573,9 +509,6 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
                     atomic_masses, ionization_energies)
         true_mean_excitation.append(i)
 
-    # print(f"True I: {true_mean_excitation}")
-    # print(f"Calculated Zs: {calculated_z_ratios}")
-
     # Step 6: Optimize c0 and c1 for mean excitation energy using Tanaka 2020 eq. 6
     c0, c1 = optimize_c(true_mean_excitation, calculated_z_ratios)
 
@@ -585,7 +518,6 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
         i_tanaka_val = i_tanaka(z_ratio, c0, c1)
         calculated_mean_excitation.append(i_tanaka_val)
 
-    # print(f"Tanaka I: {calculated_mean_excitation}")
     # Step 7: Calculate stopping power
     for t, rho, mat in zip(calculated_mean_excitation, calculated_rhos, materials_list):
         I = get_I(t)
@@ -610,6 +542,10 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     r2_z = r2_score(ground_z, optimized_zs)
     print(f"RMSE for Z: {rmse_z} with R2 of {r2_z}")
 
+    ## DEBUGGING LOGS ##
+    for mat, rho, z, spr in zip(materials_list, calculated_rhos, optimized_zs, t_sprs):
+        print(f"{mat}'s Rho: {rho}, Z: {z}, SPR: {spr}")
+        
     # Return JSON
     results = {
         "materials": materials_list,
@@ -632,29 +568,3 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     }
 
     return json.dumps(results, indent=4)
-
-# body phantom (70/140) st = 0.6 WORKS
-# low_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-70/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200010685.dcm"
-# high_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-140/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200014213.dcm"
-
-# body phantom 80-100 st = 0.6 NOT WORK R2 FOR Z = -0.12
-# low_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-80/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200011576.dcm"
-# high_path = "/Users/royaparsa/Desktop/Body-0.6/Body-Abdomen-0.6-100/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200012476.dcm"
-
-# head phantom (70/ 140) st = 3 NOT WORK R2 FOR Z = 0.33
-# low_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-70/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200019565.dcm"
-# high_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-140/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200021189.dcm"
-
-# works head phantom 80/100 st = 0.6 WORK
-# high_path = "/Users/royaparsa/Desktop/Head-0.6/Head-Abdomen-0.6-100/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020329.dcm"
-# low_path = "/Users/royaparsa/Desktop/Head-0.6/Head-Abdomen-0.6-80/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020022.dcm"
-
-# works head phantom (80/100) st = 3 WORK
-# high_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-100/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020560.dcm"
-# low_path = "/Users/royaparsa/Desktop/Head-3/Head-Abdomen-3-80/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200019893.dcm"
-
-# works (80/100) st = 3 WORK
-# high_path = "/Users/royaparsa/Downloads/test-data/high/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020533.dcm"
-# low_path = "/Users/royaparsa/Downloads/test-data/low/CT1.3.12.2.1107.5.1.4.83775.30000024051312040257200020240.dcm"
-
-# tanaka(high_path, low_path, "Body", 1)

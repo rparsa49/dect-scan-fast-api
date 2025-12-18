@@ -10,11 +10,9 @@ from scipy.optimize import curve_fit
 
 DATA_DIR = Path("data")
 
-
 def load_json(file_name):
     with open(DATA_DIR / file_name, "r") as file:
         return json.load(file)
-
 
 WATER_SPR = load_json("water_sp.json")
 CIRCLE_DATA = load_json("circles.json")
@@ -27,8 +25,6 @@ TRUE_RHO = {mat: MATERIAL_PROPERTIES[mat]
             ["rho_e_w"]for mat in MATERIAL_PROPERTIES}
 
 # Hunemohr Functions
-
-
 def rho_e_hunemohr(HU_h, HU_l, c):
     '''
     Hunemohr 2014
@@ -52,8 +48,6 @@ def beta(kvp=200):
     return np.sqrt(1 - (1 / gamma ** 2)) ** 2
 
 # Reference I values (Bär 2018)
-
-
 def ref_I(material):
     '''
     Bragg Additivity Rule for the mean excitation energy of a compound
@@ -86,8 +80,6 @@ def ref_I(material):
     return float(np.exp(ln_I_med))
 
 # Fit I
-
-
 def fit_I(Zs, Is):
     Z_arr = np.array(Zs)
     lnI_arr = np.log(np.array(Is))
@@ -99,20 +91,14 @@ def fit_I(Zs, Is):
     return a, b
 
 # Hunemohr 2014 eq. 2
-
-
 def hunemohr_I(a, b, Z):
     return a * Z + b
 
 # Hunemohr 2014 eq. 3
-
-
 def spr_hunemohr(rho, I):
     return rho * ((12.77 - I) / 8.45)
 
 # Fitting Functions
-
-
 def optimize_c(HU_H_List, HU_L_List, true_rho_list, materials_list):
     def objective(c):
         errors = []
@@ -197,7 +183,7 @@ def hunemohr_test(high_path, low_path, phantom_type, radii_ratios, a, b, c):
 
         # Mask for circular region
         mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
         high_pixel_values = high_image[mask == 1]
         low_pixel_values = low_image[mask == 1]
@@ -306,7 +292,7 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
     SAVED_CIRCLES = CIRCLE_DATA[phantom_type]
 
     for circle in SAVED_CIRCLES:
-        x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
+        x, y, radius, material = int(circle["x"]), int(circle["y"]), circle["radius"], circle["material"]
         if material not in TRUE_RHO or material in materials_list:
             print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
@@ -315,7 +301,7 @@ def hunemohr(high_path, low_path, phantom_type, radii_ratios):
 
         # Mask for circular region
         mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
         high_pixel_values = high_image[mask == 1]
         low_pixel_values = low_image[mask == 1]
