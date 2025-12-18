@@ -101,8 +101,8 @@ def spr_tanaka(rho, I, beta):
 
 # Optimize alpha to match true electron density using Saito 2017a eq. 1 and eq. 2
 def optimize_alpha(HU_H_LIST, HU_L_LIST, true_rho_list, materials_list):
-    best_r2 = 0
-    best_alpha = None
+    best_r2 = -np.inf
+    best_alpha = 0.5
     best_a = None
     best_b = None
 
@@ -279,7 +279,7 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
     for circle in saved_circles:
         x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
 
-        if material not in TRUE_RHO or material == '50% CaCO3' or material == '30% CaCO3':
+        if material not in TRUE_RHO:
             # print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
 
@@ -287,7 +287,7 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
 
         # Mask for circular region
         mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
         high_pixel_values = high_image[mask == 1]
         low_pixel_values = low_image[mask == 1]
@@ -302,7 +302,6 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
         HU_L_List.append(mean_low_hu)
 
     # Step 1: Get optimized alpha
-
     deltas = []
     for HU_H, HU_L in zip(HU_H_List, HU_L_List):
         delta = ((1 + alpha) * HU_H) - (alpha * HU_L)
@@ -400,7 +399,6 @@ def tanaka_test(high_path, low_path, phantom_type, radii_ratios, alpha, a, b, ga
 
     return json.dumps(results, indent=4)
 
-
 def tanaka(high_path, low_path, phantom_type, radii_ratios):
     dicom_data_h = pydicom.dcmread(high_path)
     dicom_data_l = pydicom.dcmread(low_path)
@@ -414,7 +412,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
 
     calculated_rhos = []
     calculated_z_effs = []
-    true_z_ratios, calculated_z_ratios = [], []
+    calculated_z_ratios = []
     optimized_zs = []
     true_mean_excitation, calculated_mean_excitation = [], []
     sprs = []
@@ -426,12 +424,12 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     gamma = 0
     c0, c1 = 0, 0
 
-    HU_H_List, HU_L_List, delta_HU_list = [], [], []
+    HU_H_List, HU_L_List = [], []
 
     for circle in saved_circles:
         x, y, radius, material = circle["x"], circle["y"], circle["radius"], circle["material"]
 
-        if material not in TRUE_RHO or material == '50% CaCO3' or material == '30% CaCO3':
+        if material not in TRUE_RHO:
             # print(f"Warning: Material '{material}' not found in TRUE_RHO.")
             continue
 
@@ -439,7 +437,7 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
 
         # Mask for circular region
         mask = np.zeros(high_image.shape, dtype=np.uint8)
-        cv2.circle(mask, (x, y), int(radius * radii_ratios), 1, thickness=-1)
+        cv2.circle(mask, (x, y), int(radius * (radii_ratios / 100)), 1, thickness=-1)
 
         high_pixel_values = high_image[mask == 1]
         low_pixel_values = low_image[mask == 1]
@@ -544,6 +542,10 @@ def tanaka(high_path, low_path, phantom_type, radii_ratios):
     r2_z = r2_score(ground_z, optimized_zs)
     print(f"RMSE for Z: {rmse_z} with R2 of {r2_z}")
 
+    ## DEBUGGING LOGS ##
+    for mat, rho, z, spr in zip(materials_list, calculated_rhos, optimized_zs, t_sprs):
+        print(f"{mat}'s Rho: {rho}, Z: {z}, SPR: {spr}")
+        
     # Return JSON
     results = {
         "materials": materials_list,
