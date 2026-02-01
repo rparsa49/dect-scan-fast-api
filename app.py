@@ -11,8 +11,8 @@ from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from methods.saito import saito, saito_test
-from methods.hunemohr import hunemohr, hunemohr_test
-from methods.tanaka import tanaka, tanaka_test
+from methods.hunemohr import hunemohr, hunemohr_test, hunemohr_batch
+from methods.tanaka import tanaka, tanaka_test, tanaka_batch
 from methods.schneider import schneider, test_schneider
 from dect_processing.dect import (save_dicom_as_png, process_and_save_circles)
 from dect_processing.organize import convert_numpy
@@ -475,6 +475,7 @@ async def test_calibration(calibration_file: UploadFile = File(...), files: List
             "c": float(calibration_data.get("c", 0.0)),
             "c0": float(calibration_data.get("c0", 0.0)),
             "c1": float(calibration_data.get("c1", 0.0)),
+            "d_e": float(calibration_data.get("d_e", 0.0))
         }
 
         if method_type == "Saito":
@@ -484,8 +485,7 @@ async def test_calibration(calibration_file: UploadFile = File(...), files: List
             )
         elif method_type == "Hunemohr":
             analysis_result_str = hunemohr_test(
-                high_dicom_path, low_dicom_path, "head", 1,
-                params["a"], params["b"], params["c"]
+                high_path, low_path, "head", 1, params["c"], params["d_e"]
             )
         elif method_type == "Tanaka":
             analysis_result_str = tanaka_test(
@@ -1246,3 +1246,42 @@ async def make_spr_map_dicom(request: Request):
         logger.exception("SPR map generation failed")
         raise HTTPException(
             status_code=500, detail=f"SPR map generation failed: {e}")
+
+
+@app.post("/analyze-inserts-batch")
+async def analyze_inserts_batch(request: Request):
+    data = await request.json()
+    radii_ratios = float(data.get("radius", 1.0))
+    phantom_type = data.get("phantom")
+    method_type = data.get("model")
+
+    # Ensure directories are set (they are set during /upload-scan)
+    if not BASE_DICOM_HIGH or (not IS_SECT and not BASE_DICOM_LOW):
+        raise HTTPException(
+            status_code=400, detail="DICOM directories not initialized. Please upload scan first.")
+
+    if method_type == "Tanaka":
+        try:
+            # Pass the folder paths (BASE_DICOM_HIGH/LOW) instead of single file paths
+            results_str = tanaka_batch(
+                BASE_DICOM_HIGH, BASE_DICOM_LOW, phantom_type, radii_ratios)
+            results = json.loads(results_str)
+            return JSONResponse(results)
+        except Exception as e:
+            logger.error(f"Batch analysis failed: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Batch analysis failed: {e}")
+    if method_type == "Hunemohr":
+        try:
+            # Pass the folder paths (BASE_DICOM_HIGH/LOW) instead of single file paths
+            results_str = hunemohr_batch(
+                BASE_DICOM_HIGH, BASE_DICOM_LOW, phantom_type, radii_ratios)
+            results = json.loads(results_str)
+            return JSONResponse(results)
+        except Exception as e:
+            logger.error(f"Batch analysis failed: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Batch analysis failed: {e}")
+    else:
+        # Placeholder for other methods if needed later
+        return JSONResponse({"error": "Batch analysis currently only supported for Tanaka method."}, status_code=400)
